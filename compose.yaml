@@ -1,6 +1,6 @@
 services:
   media-harbor:
-    image: ${IMAGE:-media-harbor:1.0.0}
+    image: ${IMAGE:-media-harbor:latest}
     build:
       context: .
       args:

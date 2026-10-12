@@ -288,12 +288,16 @@ textarea{resize:vertical;margin-bottom:8px;line-height:1.5}
 }
 
 /* 任务配置与执行汇总共用紧凑表格，操作在单元格内换行。 */
-.management-table .task-name{max-width:230px;min-width:160px}
-/* 头像共用任务名称所在单元格，保持一配置一行和既有纵向密度。 */
-.task-author{display:flex;align-items:center;gap:8px;min-width:0}
-.task-avatar{width:32px;height:32px;object-fit:cover;border-radius:50%;flex-shrink:0}
-.task-author-text{min-width:0}
-.management-table .task-name strong,.management-table .task-name a{display:block;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.management-table .task-name{width:28%;min-width:240px}
+/* 放大头像并给名称与地址独立文字空间，信息在同一行内对齐。 */
+.task-author{display:flex;align-items:center;gap:12px;min-width:0}
+.task-avatar{width:56px;height:56px;object-fit:cover;border-radius:50%;flex-shrink:0}
+.task-author-text{flex:1;min-width:0}
+.management-table .task-name strong,.management-table .task-name a{display:block;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.management-table .task-name strong{font-size:14px;line-height:20px}
+.management-table .task-name a{margin-top:4px;font-size:12px;line-height:18px;color:var(--muted)}
+/* 周期、下次执行和队列统计采用相同小间距，避免辅助文案撑高整行。 */
+.management-table td .help{margin:4px 0 0;line-height:18px}
 .management-table .actions{min-width:240px;max-width:290px;white-space:normal}
 
 /* 队列窄屏保持文字横排，由表格容器滚动查看后续列。 */
