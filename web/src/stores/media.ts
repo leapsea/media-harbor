@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useToast } from 'primevue/usetoast'
 import type { Dashboard, Subscription, Content, Settings, TaskGroup } from '../types'
+import { confirmMutation } from '../utils/mutation'
 
 /**
  * 同源请求只在这里处理错误，组件不重复实现数据读取逻辑。
@@ -18,7 +19,7 @@ export async function api<T>(path: string, method = 'GET', body?: unknown): Prom
 }
 
 /**
- * 状态与操作分离：刷新只读，mutate 在操作结束后统一刷新。
+ * 状态与操作分离：刷新只读，mutate 确认写入后在后台同步展示数据。
  */
 export const useMediaStore = defineStore('media', () => {
  const toast = useToast()
@@ -57,14 +58,15 @@ export const useMediaStore = defineStore('media', () => {
  }
 
  /**
- * 所有写操作具备可见的等待和失败状态。
+ * 等待状态只覆盖写请求；成功提示与页面刷新解耦，避免慢查询阻塞操作确认。
  */
  async function mutate(action: () => Promise<unknown>, message = '已保存') {
   busy.value = true
   try {
-   await action(); await refresh()
-   toast.add({ severity: 'success', summary: t('操作成功'), detail: t(message), life: 3500 })
-   return true
+   return await confirmMutation(action, refresh,
+    () => toast.add({ severity: 'success', summary: t('操作成功'), detail: t(message), life: 3500 }),
+    reportError,
+    error => toast.add({ severity: 'error', summary: t('页面刷新失败'), detail: t(error instanceof Error ? error.message : String(error)), life: 8000 }))
   }
   catch (e) { reportError(e); return false }
   finally { busy.value = false }

@@ -11,7 +11,10 @@ import (
 func (a *App) retryContentLocked(existing domain.Content, discovered domain.Content, task domain.Task) error {
 	existing.URL = discovered.URL
 	existing.Title = discovered.Title
-	existing.Published = discovered.Published
+	// 扁平扫描可能没有日期，不能清空上次下载解析的发布时间。
+	if !discovered.Published.IsZero() {
+		existing.Published = discovered.Published
+	}
 	existing.Asset = discovered.Asset
 	if discovered.ChannelID != "" {
 		existing.ChannelID = discovered.ChannelID

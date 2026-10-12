@@ -36,6 +36,11 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 	if err = os.WriteFile(metadataPath, metadata, 0644); err != nil {
 		return err
 	}
+	if published := PublicationDate(dir); !published.IsZero() {
+		log(fmt.Sprintf("媒体 %s：已解析发布日期 %s", item.RemoteID, published.Format("2006-01-02")))
+	} else {
+		log(fmt.Sprintf("媒体 %s：平台未提供发布日期", item.RemoteID))
+	}
 	// 详情地址可能没有扁平扫描付费标识，解析后再次决策，尚未请求媒体和附属项。
 	var access struct {
 		ChannelID    string            `json:"channel_id"`

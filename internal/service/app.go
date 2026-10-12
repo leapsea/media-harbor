@@ -605,7 +605,7 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 				pending += w
 				skipped += v
 				discovered++
-				log(fmt.Sprintf("发现媒体 %s；轮播序号 %d；发布日期 %s；累计发现 %d 项；新增 %d 项；重新排队 %d 项；重复跳过 %d 项", item.RemoteID, item.Asset, item.Published.Format("2006-01-02"), discovered, added, retried, skipped+completed+pending))
+				log(fmt.Sprintf("发现媒体 %s；轮播序号 %d；发布日期 %s；累计发现 %d 项；新增 %d 项；重新排队 %d 项；重复跳过 %d 项", item.RemoteID, item.Asset, publicationLabel(item.Published), discovered, added, retried, skipped+completed+pending))
 			}
 			return nil
 		}
@@ -699,7 +699,7 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 		options = *s.YouTube
 	}
 	dir := a.WorkPath(t)
-	log(fmt.Sprintf("开始下载：媒体 %s；轮播序号 %d；发布日期 %s", c.RemoteID, c.Asset, c.Published.Format("2006-01-02")))
+	log(fmt.Sprintf("开始下载：媒体 %s；轮播序号 %d；发布日期 %s", c.RemoteID, c.Asset, publicationLabel(c.Published)))
 	log("媒体地址：" + c.URL)
 	// 工作目录与最终保存位置分别记录，便于查找尚未成功的文件。
 	log("下载工作目录：" + dir)
@@ -707,6 +707,10 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 	downloadErr := e
 	// 以当前语言的下载元数据刷新标题，已存在的媒体文件也无需重新下载。
 	if s.Platform == "youtube" {
+		// 单视频元数据优先于扁平扫描；下载失败也保留已解析的真实日期。
+		if published := engine.PublicationDate(dir); !published.IsZero() {
+			c.Published = published
+		}
 		if title := engine.PublicationTitle(dir); title != "" {
 			c.Title = title
 		}
@@ -771,6 +775,14 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 		e = ctx.Err()
 	}
 	a.finish(t, e)
+}
+
+// publicationLabel 不将尚未解析的日期零值显示成公元 1 年。
+func publicationLabel(date time.Time) string {
+	if date.IsZero() {
+		return "待解析"
+	}
+	return date.Format("2006-01-02")
 }
 
 // finish 不覆盖用户取消状态；服务停止的任务回到队列。
