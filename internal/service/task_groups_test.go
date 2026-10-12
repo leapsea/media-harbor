@@ -222,3 +222,74 @@ func TestDebugLimitSwitch(t *testing.T) {
 		t.Fatal("切换调试限制不应删除历史条目")
 	}
 }
+
+// TestTaskGroupProjectionPreservesCurrentBatch checks that SQL aggregation keeps the selected
+// download range, newest scan, state priority, update time and error precedence.
+func TestTaskGroupProjectionPreservesCurrentBatch(t *testing.T) {
+	a := testApp(t, fakeEngine{})
+	sub := addSub(t, a, "projection", "youtube")
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 1; i <= 3; i++ {
+		if err := a.Repo.AddContentAndTask(sub.ID, domain.Content{RemoteID: fmt.Sprint(i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tasks, err := a.Repo.Tasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents, err := a.Repo.Contents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteIDs := map[int64]string{}
+	for _, item := range contents {
+		remoteIDs[item.ID] = item.RemoteID
+	}
+	for i := range tasks {
+		task := tasks[i]
+		switch remoteIDs[task.ContentID] {
+		case "1":
+			task.Status, task.Error = "failed", "download error"
+			task.CreatedAt, task.StartedAt, task.FinishedAt = base, base.Add(time.Minute), base.Add(2*time.Minute)
+		case "2":
+			task.Status = "completed"
+			task.CreatedAt, task.FinishedAt = base.Add(3*time.Minute), base.Add(4*time.Minute)
+		case "3":
+			task.Status = "running"
+			task.CreatedAt = base.Add(5 * time.Minute)
+		}
+		if err := a.Repo.SaveTask(&task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	firstScan, err := a.Repo.Enqueue(sub.ID, 0, "scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstScan.Status, firstScan.CreatedAt = "completed", base.Add(6*time.Minute)
+	if err := a.Repo.SaveTask(&firstScan); err != nil {
+		t.Fatal(err)
+	}
+	latestScan, err := a.Repo.Enqueue(sub.ID, 0, "scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	latestScan.Status, latestScan.Error, latestScan.CreatedAt = "failed", "scan error", base.Add(7*time.Minute)
+	if err := a.Repo.SaveTask(&latestScan); err != nil {
+		t.Fatal(err)
+	}
+	settings, _ := a.Repo.Settings()
+	settings.Debug.TestItemLimit = 2
+	if err := a.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	groups, err := a.TaskGroups()
+	if err != nil || len(groups) != 1 {
+		t.Fatalf("groups=%+v err=%v", groups, err)
+	}
+	group := groups[0]
+	if group.Total != 2 || group.Counts["failed"] != 1 || group.Counts["completed"] != 1 || group.ScanStatus != "failed" || group.Status != "failed" || group.Error != "scan error" || !group.UpdatedAt.Equal(base.Add(7*time.Minute)) {
+		t.Fatalf("group=%+v", group)
+	}
+}

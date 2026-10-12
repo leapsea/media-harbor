@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS content_items(id INTEGER PRIMARY KEY,subscription_id 
 CREATE TABLE IF NOT EXISTS download_history_cleared(content_id INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY,subscription_id INTEGER NOT NULL,content_id INTEGER NOT NULL,kind TEXT NOT NULL,status TEXT NOT NULL,payload TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS tasks_status ON tasks(status,id);
+CREATE INDEX IF NOT EXISTS tasks_subscription_id ON tasks(subscription_id,id);
 CREATE UNIQUE INDEX IF NOT EXISTS task_active ON tasks(subscription_id,content_id,kind) WHERE status IN ('queued','running');
 CREATE TABLE IF NOT EXISTS app_settings(id INTEGER PRIMARY KEY,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS engine_versions(name TEXT PRIMARY KEY,version TEXT NOT NULL,checked_at TEXT NOT NULL);

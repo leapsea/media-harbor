@@ -25,6 +25,7 @@ export interface Content {
  id: number; subscription_id: number; remote_id: string; url: string; title: string
  published: string; status: string; paths: string[]; tags: string[]; files: ContentFile[]; archived: boolean; error: string
 }
+export interface ContentHistoryPage { items: Content[]; total: number; page: number; page_size: number }
 
 /**
  * 挂载与权限是两个独立状态，不由目录是否存在推断。

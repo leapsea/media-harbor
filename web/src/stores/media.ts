@@ -2,7 +2,7 @@ import { t, setLocale } from '../i18n'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useToast } from 'primevue/usetoast'
-import type { Dashboard, Subscription, Content, Settings, TaskGroup } from '../types'
+import type { Dashboard, Subscription, Content, ContentHistoryPage, Settings, TaskGroup } from '../types'
 import type { Directory } from '../types'
 import type { PageId } from '../utils/hashRoute'
 import { confirmMutation } from '../utils/mutation'
@@ -30,6 +30,10 @@ export const useMediaStore = defineStore('media', () => {
  const taskGroups = ref<TaskGroup[]>([])
  const contents = ref<Content[]>([])
  const contentsLoaded = ref(false)
+ const historyTotal = ref(0)
+ const historyPage = ref(1)
+ const historyPageSize = ref(20)
+ let historyPageSizeSelected = false
  const directories = ref<Directory[]>([])
  const settings = ref<Settings | null>(null)
  const busy = ref(false)
@@ -70,16 +74,21 @@ async function loadPage(page: PageId) {
    directories.value = nextDirectories
    setLocale(nextSettings.ui.language)
   } else if (page === 'history') {
-   const [nextContents, nextSubscriptions, nextSettings, nextDirectories] = await Promise.all([
-    api<Content[]>('/contents'), api<Subscription[]>('/subscriptions'),
-    api<Settings>('/settings'), api<Directory[]>('/directories'),
-   ])
-   contents.value = nextContents
-   contentsLoaded.value = true
-   subscriptions.value = nextSubscriptions
-   settings.value = nextSettings
-   directories.value = nextDirectories
-   setLocale(nextSettings.ui.language)
+   if (!contentsLoaded.value) {
+    const [nextHistory, nextSubscriptions, nextSettings, nextDirectories] = await Promise.all([
+     api<ContentHistoryPage>(`/contents/page?page=${historyPage.value}`), api<Subscription[]>('/subscriptions'),
+     api<Settings>('/settings'), api<Directory[]>('/directories'),
+    ])
+    subscriptions.value = nextSubscriptions
+    settings.value = nextSettings
+    directories.value = nextDirectories
+    setLocale(nextSettings.ui.language)
+    applyHistoryPage(nextHistory)
+   } else {
+    const sizeQuery = historyPageSizeSelected ? `&size=${historyPageSize.value}` : ''
+    const nextHistory = await api<ContentHistoryPage>(`/contents/page?page=${historyPage.value}${sizeQuery}`)
+    applyHistoryPage(nextHistory)
+   }
   } else {
    const [nextSettings, nextDirectories] = await Promise.all([
     api<Settings>('/settings'), api<Directory[]>('/directories'),
@@ -90,7 +99,25 @@ async function loadPage(page: PageId) {
   }
 }
 
-function setActivePage(page: PageId) { activePage = page }
+function applyHistoryPage(data: ContentHistoryPage) {
+ contents.value = data.items
+ historyTotal.value = data.total
+ historyPage.value = data.page
+ historyPageSize.value = data.page_size
+ contentsLoaded.value = true
+}
+
+function setHistoryPagination(page: number, size: number) {
+ historyPage.value = page
+ historyPageSize.value = size
+ historyPageSizeSelected = true
+ void refresh('history').catch(reportError)
+}
+
+function setActivePage(page: PageId) {
+ activePage = page
+ if (page !== 'history') historyPageSizeSelected = false
+}
 
 function refresh(page: PageId = activePage) {
  activePage = page
@@ -134,5 +161,5 @@ function refresh(page: PageId = activePage) {
   catch (e) { reportError(e); return false }
   finally { busy.value = false }
  }
- return { dashboard, subscriptions, taskGroups, contents, contentsLoaded, directories, settings, busy, refreshing, archiveMounted, archiveAvailable, subscriptionName, reportError, setActivePage, refresh, mutate }
+ return { dashboard, subscriptions, taskGroups, contents, contentsLoaded, historyTotal, historyPage, historyPageSize, directories, settings, busy, refreshing, archiveMounted, archiveAvailable, subscriptionName, reportError, setActivePage, setHistoryPagination, refresh, mutate }
 })

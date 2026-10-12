@@ -42,12 +42,10 @@ func (a *App) TaskDetails(subscriptionID int64) (TaskDetails, error) {
 	if err != nil {
 		return TaskDetails{}, err
 	}
-	tasks, err := a.Repo.Tasks()
+	rows, err := a.Repo.TaskContentRows(subscriptionID, settings.Debug.TestItemLimit)
 	if err != nil {
 		return TaskDetails{}, err
 	}
-	// 管理页与详情采用同一范围，测试模式下不读取额外历史作为新任务。
-	selected := selectedTasks(tasks, subscriptionID, settings.Debug.TestItemLimit)
 	result := TaskDetails{Platform: sub.Platform, Items: []DetailContent{}}
 	index := map[string]int{}
 	statuses := map[int64]string{}
@@ -59,14 +57,11 @@ func (a *App) TaskDetails(subscriptionID int64) (TaskDetails, error) {
 	if sub.YouTube != nil {
 		options = *sub.YouTube
 	}
-	for _, task := range selected {
+	for _, row := range rows {
+		task, content := row.Task, row.Content
 		statuses[task.ID] = task.Status
 		if task.ContentID == 0 {
 			continue
-		}
-		content, err := a.Repo.Content(task.ContentID)
-		if err != nil {
-			return result, err
 		}
 		key := content.RemoteID
 		// 轮播媒体 ID 的尾部序号仅用于下载去重，展示归属于同一个帖子。

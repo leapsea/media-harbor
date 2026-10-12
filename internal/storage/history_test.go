@@ -86,4 +86,9 @@ func TestClearDownloadHistory(t *testing.T) {
 	if len(history) != 2 {
 		t.Fatal(history)
 	}
+	page, err := s.DownloadHistoryPage(1, 1)
+	total, countErr := s.DownloadHistoryCount()
+	if err != nil || countErr != nil || len(page) != 1 || page[0].RemoteID != "one" || total != 2 {
+		t.Fatal(page, total, err, countErr)
+	}
 }

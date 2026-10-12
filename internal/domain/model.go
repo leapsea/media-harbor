@@ -109,6 +109,26 @@ type Task struct {
 	FinishedAt     time.Time          `json:"finished_at"`
 }
 
+// TaskContentRow 将任务与详情展示所需的内容快照关联。
+type TaskContentRow struct {
+	Task    Task
+	Content Content
+}
+
+// TaskGroupStats 是任务管理列表使用的轻量汇总投影。
+type TaskGroupStats struct {
+	SubscriptionID int64
+	Counts         map[string]int
+	Total          int
+	ScanStatus     string
+	UpdatedAt      time.Time
+	Error          string
+	Queued         int
+	Running        int
+	Failed         int
+	Cancelled      int
+}
+
 // TransferProgress 是一个视频或帖子媒体的实际传输状态，不单独占用队列名额。
 type TransferProgress struct {
 	Title      string  `json:"title,omitempty"`
@@ -176,6 +196,8 @@ type DryRunner interface {
 // DownloadHistoryRepository 隔离历史展示生命周期，不删除下载索引或文件。
 type DownloadHistoryRepository interface {
 	DownloadHistory() ([]Content, error)
+	DownloadHistoryPage(offset, limit int) ([]Content, error)
+	DownloadHistoryCount() (int, error)
 	RecentDownloadHistory(int) ([]Content, error)
 	ClearDownloadHistory() (int, error)
 	ShowDownloadHistory(int64) error
@@ -195,6 +217,8 @@ type Repository interface {
 	Content(int64) (Content, error)
 	SaveContent(*Content) error
 	Tasks() ([]Task, error)
+	TaskGroupStats(int) ([]TaskGroupStats, error)
+	TaskContentRows(int64, int) ([]TaskContentRow, error)
 	TaskStatusCounts() (map[string]int, error)
 	Task(int64) (Task, error)
 	SaveTask(*Task) error

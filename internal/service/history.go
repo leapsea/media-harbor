@@ -24,6 +24,29 @@ func (a *App) ContentHistory() ([]domain.Content, error) {
 	if err != nil {
 		return nil, err
 	}
+	enrichHistory(items, subs)
+	return items, nil
+}
+
+// ContentHistoryPage 只补充当前页所需的文件元数据，避免对所有历史产物做文件读取。
+func (a *App) ContentHistoryPage(offset, limit int) ([]domain.Content, int, error) {
+	items, err := a.Repo.DownloadHistoryPage(offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	count, err := a.Repo.DownloadHistoryCount()
+	if err != nil {
+		return nil, 0, err
+	}
+	subs, err := a.Repo.Subscriptions()
+	if err != nil {
+		return nil, 0, err
+	}
+	enrichHistory(items, subs)
+	return items, count, nil
+}
+
+func enrichHistory(items []domain.Content, subs []domain.Subscription) {
 	platforms := map[int64]string{}
 	for _, s := range subs {
 		platforms[s.ID] = s.Platform
@@ -45,5 +68,4 @@ func (a *App) ContentHistory() ([]domain.Content, error) {
 			}
 		}
 	}
-	return items, nil
 }

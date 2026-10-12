@@ -62,52 +62,20 @@ func (a *App) TaskGroups() ([]TaskGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	tasks, err := a.Repo.Tasks()
+	stats, err := a.Repo.TaskGroupStats(settings.Debug.TestItemLimit)
 	if err != nil {
 		return nil, err
 	}
-	groups := []TaskGroup{}
-	// 一次分组，避免每个订阅重复复制和排序整个队列；保留首次出现顺序。
-	bySubscription := map[int64][]domain.Task{}
-	order := []int64{}
-	for _, task := range tasks {
-		if _, exists := bySubscription[task.SubscriptionID]; !exists {
-			order = append(order, task.SubscriptionID)
-		}
-		bySubscription[task.SubscriptionID] = append(bySubscription[task.SubscriptionID], task)
-	}
-	for _, subscriptionID := range order {
-		group := TaskGroup{SubscriptionID: subscriptionID, Status: "completed", Counts: map[string]int{"queued": 0, "running": 0, "completed": 0, "failed": 0, "cancelled": 0, "skipped": 0}, TestItemLimit: settings.Debug.TestItemLimit}
-		selected := selectedTasks(bySubscription[subscriptionID], subscriptionID, settings.Debug.TestItemLimit)
-		// 扫描仅参与总体状态，下载计数中不混入扫描成功记录。
-		states := map[string]int{}
-		for _, t := range selected {
-			states[t.Status]++
-			if t.ContentID == 0 {
-				group.ScanStatus = t.Status
-			} else {
-				group.Counts[t.Status]++
-				group.Total++
-			}
-			// 最近活动覆盖创建、开始与结束，重试后仍能看到本次更新时间。
-			changed := t.CreatedAt
-			if t.StartedAt.After(changed) {
-				changed = t.StartedAt
-			}
-			if t.FinishedAt.After(changed) {
-				changed = t.FinishedAt
-			}
-			if changed.After(group.UpdatedAt) {
-				group.UpdatedAt = changed
-			}
-			if t.Error != "" {
-				group.Error = t.Error
-			}
-		}
-		// 有运行或等待时优先展示进行中；否则显式呈现失败或取消。
-		for _, state := range []string{"running", "queued", "failed", "cancelled"} {
-			if states[state] > 0 {
-				group.Status = state
+	groups := make([]TaskGroup, 0, len(stats))
+	for _, stat := range stats {
+		group := TaskGroup{SubscriptionID: stat.SubscriptionID, Status: "completed", Counts: stat.Counts, Total: stat.Total, ScanStatus: stat.ScanStatus, UpdatedAt: stat.UpdatedAt, Error: stat.Error, TestItemLimit: settings.Debug.TestItemLimit}
+		// 状态汇总包含扫描任务；下载进度只统计媒体任务。
+		for _, state := range []struct {
+			name  string
+			count int
+		}{{"running", stat.Running}, {"queued", stat.Queued}, {"failed", stat.Failed}, {"cancelled", stat.Cancelled}} {
+			if state.count > 0 {
+				group.Status = state.name
 				break
 			}
 		}

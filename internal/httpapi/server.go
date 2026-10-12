@@ -93,6 +93,7 @@ func Handler(app *service.App) http.Handler {
 		reply(w, map[string]int{"cleared": count}, err)
 	})
 	mux.HandleFunc("GET /api/contents", func(w http.ResponseWriter, r *http.Request) { v, e := app.ContentHistory(); reply(w, v, e) })
+	mux.HandleFunc("GET /api/contents/page", api.contentHistoryPage)
 	mux.HandleFunc("POST /api/contents/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, map[string]bool{"ok": true}, app.RetryArchive(id(r)))
 	})
@@ -125,6 +126,44 @@ func Handler(app *service.App) http.Handler {
 	// 构建后的 Vue 文件由 Go 提供，Docker 中无需运行 Node 服务。
 	mux.Handle("/", http.FileServer(http.Dir(app.Config.WebDir)))
 	return mux
+}
+
+// contentHistoryPage pages the history before decoding content snapshots or inspecting artifact files.
+func (api *API) contentHistoryPage(w http.ResponseWriter, r *http.Request) {
+	settings, err := api.app.Settings()
+	if err != nil {
+		reply(w, nil, err)
+		return
+	}
+	page, err := strconv.Atoi(r.URL.Query().Get("page"))
+	if err != nil || page < 1 {
+		page = 1
+	}
+	size, err := strconv.Atoi(r.URL.Query().Get("size"))
+	if err != nil || size < 1 {
+		size = settings.UI.HistoryPageSize
+	}
+	if size < 1 { // Older or incomplete settings use the product's established default.
+		size = 20
+	}
+	items, total, err := api.app.ContentHistoryPage((page-1)*size, size)
+	if err != nil {
+		reply(w, nil, err)
+		return
+	}
+	pages := (total + size - 1) / size
+	if pages == 0 {
+		pages = 1
+	}
+	if page > pages {
+		page = pages
+		items, total, err = api.app.ContentHistoryPage((page-1)*size, size)
+		if err != nil {
+			reply(w, nil, err)
+			return
+		}
+	}
+	reply(w, map[string]any{"items": items, "total": total, "page": page, "page_size": size}, nil)
 }
 
 // reply 统一返回 error 字段，使前端和任务错误交互保持一致。

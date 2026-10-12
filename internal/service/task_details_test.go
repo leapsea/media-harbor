@@ -100,6 +100,25 @@ func TestInstagramTaskDetails(t *testing.T) {
 	}
 }
 
+func TestTaskDetailsUsesScopedJoinedRows(t *testing.T) {
+	a := testApp(t, fakeEngine{})
+	sub := addSub(t, a, "scoped-details", "youtube")
+	for _, remoteID := range []string{"first", "second", "third"} {
+		if err := a.Repo.AddContentAndTask(sub.ID, domain.Content{RemoteID: remoteID, Title: remoteID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	settings, _ := a.Repo.Settings()
+	settings.Debug.TestItemLimit = 1
+	if err := a.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := a.TaskDetails(sub.ID)
+	if err != nil || len(detail.Items) != 1 || detail.Items[0].Key != "first" {
+		t.Fatalf("detail=%+v err=%v", detail, err)
+	}
+}
+
 func TestConciseTaskLog(t *testing.T) {
 	raw := "[2026-10-12 01:00:00] 开始 download 任务 #1；第 1 次执行\n[2026-10-12 01:00:01] ERROR: old failure\n[2026-10-12 02:00:00] 开始 download 任务 #1；第 2 次执行\n[2026-10-12 02:00:01] [youtube] Downloading webpage\n[2026-10-12 02:00:02] [download] 40% of 1MiB ETA 00:01\n[2026-10-12 02:00:03] 主任务：开始下载视频\n[2026-10-12 02:00:04] WARNING: media denied\n[2026-10-12 02:00:05] ERROR: HTTP 403\n[2026-10-12 02:00:06] 本次执行结束，耗时 6s\n"
 	got := conciseTaskLog(raw)

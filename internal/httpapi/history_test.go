@@ -48,6 +48,20 @@ func TestHistoryClearAPI(t *testing.T) {
 		t.Fatal(response.Body.String())
 	}
 	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest("GET", "/api/contents/page?page=1", nil))
+	var historyPage struct {
+		Items []domain.Content `json:"items"`
+		Total int              `json:"total"`
+		Page  int              `json:"page"`
+		Size  int              `json:"page_size"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &historyPage); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != 200 || len(historyPage.Items) != 0 || historyPage.Total != 0 || historyPage.Page != 1 || historyPage.Size < 1 {
+		t.Fatal(response.Body.String())
+	}
+	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest("GET", "/api/dashboard", nil))
 	var dashboard struct {
 		Recent []domain.Content `json:"recent"`
