@@ -149,12 +149,71 @@ func (v ArtifactInventory) missingSubtitles(options domain.YouTubeOptions, metad
 			delete(languages, lang)
 		}
 	}
-	missing := []string{}
-	for lang := range languages {
-		missing = append(missing, lang)
+	// 语言配置的顺序决定优先级，同一语言组只返回一份字幕。
+	// 已有符合条件的字幕即满足需求，不额外补另一种语言。
+	for lang := range availableLanguages {
+		if v.subtitle(lang) && subtitleMatches(options.SubtitleLanguages, lang) {
+			return ""
+		}
 	}
-	sort.Strings(missing)
-	return strings.Join(missing, ",")
+	for _, pattern := range strings.Split(options.SubtitleLanguages, ",") {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" || strings.HasPrefix(pattern, "-") {
+			continue
+		}
+		if pattern == "all" {
+			pattern = ".*"
+		}
+		re, err := regexp.Compile("^(?:" + pattern + ")$")
+		if err != nil {
+			return options.SubtitleLanguages
+		}
+		choices := []string{}
+		for lang := range languages {
+			if re.MatchString(lang) {
+				choices = append(choices, lang)
+			}
+		}
+		sort.Slice(choices, func(i, j int) bool {
+			a, b := choices[i], choices[j]
+			rank := func(lang string) int {
+				if options.Subtitles {
+					if _, ok := available.Subtitles[lang]; ok {
+						return 0
+					}
+				}
+				if !translatedCaption(lang, available.Auto[lang]) {
+					return 1
+				}
+				return 2
+			}
+			if rank(a) != rank(b) {
+				return rank(a) < rank(b)
+			}
+			return a < b
+		})
+		if len(choices) > 0 {
+			return choices[0]
+		}
+	}
+	return ""
+}
+
+// subtitleMatches 按配置表达式与排除条件判断已有字幕是否满足单份需求。
+func subtitleMatches(patterns, language string) bool {
+	selected := false
+	for _, pattern := range strings.Split(patterns, ",") {
+		pattern = strings.TrimSpace(pattern)
+		exclude := strings.HasPrefix(pattern, "-")
+		pattern = strings.TrimPrefix(pattern, "-")
+		if pattern == "all" {
+			pattern = ".*"
+		}
+		if re, err := regexp.Compile("^(?:" + pattern + ")$"); err == nil && re.MatchString(language) {
+			selected = !exclude
+		}
+	}
+	return selected
 }
 
 // preferOriginalChinese 保留配置匹配的原始中文轨道；不存在时沿用中文翻译候选。

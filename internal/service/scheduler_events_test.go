@@ -14,6 +14,62 @@ type slotEngine struct {
 	release chan struct{}
 }
 
+// childSlotEngine 的视频阶段立即完成，附属阶段必须显式结束后才能交还名额。
+type childSlotEngine struct {
+	fakeEngine
+	started  chan string
+	children chan string
+	release  chan struct{}
+}
+
+func (e childSlotEngine) Download(ctx context.Context, s domain.Subscription, c domain.Content, o domain.YouTubeOptions, dir string, log func(string)) error {
+	e.started <- c.RemoteID
+	if err := e.fakeEngine.Download(ctx, s, c, o, dir, log); err != nil {
+		return err
+	}
+	e.children <- c.RemoteID
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-e.release:
+		return nil
+	}
+}
+
+func TestChildTasksHoldVideoSlot(t *testing.T) {
+	e := childSlotEngine{started: make(chan string, 2), children: make(chan string, 2), release: make(chan struct{}, 1)}
+	a := testApp(t, e)
+	settings, _ := a.Repo.Settings()
+	settings.YouTubeConcurrent = 1
+	if err := a.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	s := addSub(t, a, "children", "youtube")
+	for _, id := range []string{"one", "two"} {
+		if err := a.Repo.AddContentAndTask(s.ID, domain.Content{RemoteID: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	startEventScheduler(t, a)
+	select {
+	case <-e.children:
+	case <-time.After(3 * time.Second):
+		t.Fatal("附属任务未启动")
+	}
+	<-e.started
+	select {
+	case <-e.started:
+		t.Fatal("附属任务尚未结束就启动下一个视频")
+	default:
+	}
+	e.release <- struct{}{}
+	select {
+	case <-e.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("附属任务结束后未释放名额")
+	}
+}
+
 func (e slotEngine) Download(ctx context.Context, s domain.Subscription, c domain.Content, o domain.YouTubeOptions, dir string, log func(string)) error {
 	e.started <- c.RemoteID
 	select {

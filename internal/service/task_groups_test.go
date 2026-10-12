@@ -180,11 +180,11 @@ func TestScanWaitingLog(t *testing.T) {
 	}
 }
 
-// TestCompactProgressLog 历史进度按秒合并，100% 汇总和 403 错误保留。
-func TestCompactProgressLog(t *testing.T) {
+// TestConciseProgressLog 流百分比由详情负责，日志保留具体错误。
+func TestConciseProgressLog(t *testing.T) {
 	raw := "[2026-10-12 17:28:33] [download] 99% ETA 00:01\n[2026-10-12 17:28:33] [download] 100.0% ETA 00:01\n[2026-10-12 17:28:34] [download] 99.7% ETA 00:01\n[2026-10-12 17:28:34] [download] 100% in 00:01:08\n[2026-10-12 17:28:34] ERROR: HTTP Error 403\n"
-	got := compactProgressLog(raw)
-	if strings.Count(got, "ETA") != 2 || !strings.Contains(got, "100% in") || !strings.Contains(got, "ERROR: HTTP Error 403") {
+	got := conciseTaskLog(raw)
+	if strings.Contains(got, "[download]") || !strings.Contains(got, "ERROR: HTTP Error 403") {
 		t.Fatal(got)
 	}
 }

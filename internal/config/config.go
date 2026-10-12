@@ -14,6 +14,9 @@ import (
 // DownloadLogInterval 限制重复进度输出，不影响错误和最终结果。
 const DownloadLogInterval = time.Second
 
+// YouTubeMediaAttempts 在媒体地址被拒绝后重新解析一次，不反复重试同一个签名地址。
+const YouTubeMediaAttempts = 2
+
 // ScanQueueCapacity 限制解析缓冲和每配置提前入队数量。
 const ScanQueueCapacity = 32
 

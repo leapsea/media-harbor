@@ -31,6 +31,10 @@ func (a *App) TaskLog(id int64) (string, error) {
 
 // taskLog 未执行时使用创建或取消时间描述状态，不读取磁盘中的其他任务日志。
 func (a *App) taskLog(task domain.Task) (string, error) {
+	// 策略跳过没有新的下载尝试，展示本次事件，避免把旧失败日志当成本次执行。
+	if task.Status == "skipped" {
+		return taskLogLine(task.FinishedAt, task.Error), nil
+	}
 	if task.Attempts == 0 {
 		if task.Status == "cancelled" {
 			return taskLogLine(task.FinishedAt, "未开始执行，已取消"), nil

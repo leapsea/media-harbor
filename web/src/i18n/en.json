@@ -242,5 +242,17 @@
   "验证连接已中断": "Check connection interrupted",
   "已停止": "Stopped",
   "停止并关闭": "Stop and close",
-  "请输入有效任务 URL": "Enter a valid task URL"
+  "请输入有效任务 URL": "Enter a valid task URL",
+  "任务详情": "Task details",
+  "待处理": "Pending",
+  "下载中": "Downloading",
+  "无需下载": "No download needed",
+  "未执行": "Not started",
+  "加载中": "Loading",
+  "暂无下载任务": "No download tasks",
+  "照片": "Photo",
+  "本地提取音频": "Locally extracted audio",
+  "已跳过": "Skipped",
+  "已跳过 {count}": "Skipped {count}",
+  "只能重试失败、取消或跳过的任务": "Only failed, cancelled or skipped tasks can be retried"
 }

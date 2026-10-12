@@ -82,6 +82,7 @@ CREATE INDEX IF NOT EXISTS tasks_status ON tasks(status,id);
 CREATE UNIQUE INDEX IF NOT EXISTS task_active ON tasks(subscription_id,content_id,kind) WHERE status IN ('queued','running');
 CREATE TABLE IF NOT EXISTS app_settings(id INTEGER PRIMARY KEY,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS engine_versions(name TEXT PRIMARY KEY,version TEXT NOT NULL,checked_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS youtube_paid_blocks(channel_id TEXT PRIMARY KEY,failed_task_id INTEGER NOT NULL);
 `
 
 // list 和 one 只在存储适配器内部共享序列化逻辑。

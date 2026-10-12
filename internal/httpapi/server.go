@@ -63,6 +63,7 @@ func Handler(app *service.App) http.Handler {
 		reply(w, v, e)
 	})
 	mux.HandleFunc("GET /api/task-groups", func(w http.ResponseWriter, r *http.Request) { v, e := app.TaskGroups(); reply(w, v, e) })
+	mux.HandleFunc("GET /api/subscriptions/{id}/details", func(w http.ResponseWriter, r *http.Request) { v, e := app.TaskDetails(id(r)); reply(w, v, e) })
 	mux.HandleFunc("GET /api/subscriptions/{id}/log", func(w http.ResponseWriter, r *http.Request) {
 		v, e := app.GroupLog(id(r))
 		reply(w, map[string]string{"log": v}, e)

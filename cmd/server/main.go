@@ -42,7 +42,7 @@ func run() error {
 		return e
 	}
 	defer db.Close()
-	app := service.New(c, db, engine.CLI{DataDir: c.DataDir})
+	app := service.New(c, db, engine.CLI{DataDir: c.DataDir, PaidPolicy: db})
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	done := make(chan struct{})

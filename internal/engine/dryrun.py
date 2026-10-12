@@ -44,6 +44,8 @@ def youtube(payload):
         "subtitleslangs": ["all", "-.*"], "getcomments": options["comments"],
         "extractor_args": {"youtube": {"max_comments": ["1"]}},
     }
+    if payload.get("language"):
+        parameters["extractor_args"]["youtube"]["lang"] = [payload["language"]]
     with ReadOnlyYoutubeDL(parameters) as ydl:
         def probe(address, headers, label, depth=0):
             started = time.monotonic()

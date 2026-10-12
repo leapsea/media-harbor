@@ -6,10 +6,11 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // taskLabels 用于订阅日志，界面无需将内部状态代码解释给用户。
-var taskLabels = map[string]string{"resolve": "内容解析", "catchup": "补全下载", "full": "全量扫描", "scan": "增量扫描", "download": "下载", "queued": "待执行", "running": "运行中", "completed": "已完成", "failed": "失败", "cancelled": "已取消"}
+var taskLabels = map[string]string{"resolve": "内容解析", "catchup": "补全下载", "full": "全量扫描", "scan": "增量扫描", "download": "下载", "queued": "待执行", "running": "运行中", "completed": "已完成", "failed": "失败", "cancelled": "已取消", "skipped": "已跳过"}
 
 // TaskGroup 将一个订阅的扫描和下载状态收口为一行，底层任务仍独立持久化。
 // 下载统计与扫描状态分开，避免扫描成功被误认为下载完成。
@@ -76,7 +77,7 @@ func (a *App) TaskGroups() ([]TaskGroup, error) {
 		bySubscription[task.SubscriptionID] = append(bySubscription[task.SubscriptionID], task)
 	}
 	for _, subscriptionID := range order {
-		group := TaskGroup{SubscriptionID: subscriptionID, Status: "completed", Counts: map[string]int{"queued": 0, "running": 0, "completed": 0, "failed": 0, "cancelled": 0}, TestItemLimit: settings.Debug.TestItemLimit}
+		group := TaskGroup{SubscriptionID: subscriptionID, Status: "completed", Counts: map[string]int{"queued": 0, "running": 0, "completed": 0, "failed": 0, "cancelled": 0, "skipped": 0}, TestItemLimit: settings.Debug.TestItemLimit}
 		selected := selectedTasks(bySubscription[subscriptionID], subscriptionID, settings.Debug.TestItemLimit)
 		// 扫描仅参与总体状态，下载计数中不混入扫描成功记录。
 		states := map[string]int{}
@@ -110,6 +111,9 @@ func (a *App) TaskGroups() ([]TaskGroup, error) {
 				break
 			}
 		}
+		if group.Status == "completed" && group.Counts["skipped"] == group.Total && group.Total > 0 {
+			group.Status = "skipped"
+		}
 		groups = append(groups, group)
 	}
 	sort.Slice(groups, func(i, j int) bool { return groups[i].UpdatedAt.After(groups[j].UpdatedAt) })
@@ -132,6 +136,11 @@ func (a *App) GroupAction(subscriptionID int64, action string) (int, error) {
 	if action == "cancel" {
 		selected = tasks
 	}
+	// 重试恢复整个批次后再允许调度，避免快速失败与逐条解除策略相互覆盖。
+	if action == "retry" {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+	}
 	count := 0
 	for _, t := range selected {
 		if t.SubscriptionID != subscriptionID {
@@ -139,8 +148,8 @@ func (a *App) GroupAction(subscriptionID int64, action string) (int, error) {
 		}
 		if action == "cancel" && (t.Status == "queued" || t.Status == "running") {
 			err = a.CancelTask(t.ID)
-		} else if action == "retry" && (t.Status == "failed" || t.Status == "cancelled") {
-			err = a.RetryTask(t.ID)
+		} else if action == "retry" && (t.Status == "failed" || t.Status == "cancelled" || t.Status == "skipped") {
+			err = a.retryTaskLocked(t.ID)
 		} else {
 			continue
 		}
@@ -182,42 +191,91 @@ func (a *App) GroupLog(subscriptionID int64) (string, error) {
 	})
 	for _, t := range selected {
 		fmt.Fprintf(&result, "\n—— 任务 #%d · %s · %s · 第 %d 次 ——\n", t.ID, taskLabels[t.Kind], taskLabels[t.Status], t.Attempts)
-		fmt.Fprintf(&result, "创建时间：%s\n", t.CreatedAt.Local().Format("2006-01-02 15:04:05"))
+		if t.ContentID != 0 {
+			if content, err := a.Repo.Content(t.ContentID); err == nil {
+				fmt.Fprintf(&result, "%s · %s\n", content.RemoteID, content.Title)
+			}
+		}
 		raw, e := a.taskLog(t)
 		if e != nil {
 			return "", e
 		}
-		result.WriteString(compactProgressLog(raw))
+		result.WriteString(conciseTaskLog(raw))
 	}
 	return result.String(), nil
 }
 
-// compactProgressLog 在展示历史日志时保留每秒最后一条下载进度。
-// 原日志文件不改写，错误、最终汇总及非进度内容全部保留。
-func compactProgressLog(raw string) string {
-	var result strings.Builder
-	pending, key := "", ""
-	flush := func() {
-		if pending != "" {
-			result.WriteString(pending + "\n")
-			pending = ""
+// conciseTaskLog 只展示最近一次执行的业务阶段和异常，完整日志文件保持原样。
+// 文件地址、播放器请求、分片百分比属于引擎诊断；字节进度由详情面板独立呈现。
+func conciseTaskLog(raw string) string {
+	lines := strings.Split(strings.TrimSpace(raw), "\n")
+	start := 0
+	for i, line := range lines {
+		if strings.Contains(line, "开始 ") && strings.Contains(line, " 任务 #") {
+			start = i
 		}
 	}
-	for _, line := range strings.Split(strings.TrimSuffix(raw, "\n"), "\n") {
-		progress := len(line) > 10 && strings.HasPrefix(line, "[") && strings.Contains(line, "[download]") && strings.Contains(line, "%") && strings.Contains(line, "ETA")
-		if progress {
-			stamp := line[:strings.IndexByte(line, ']')+1]
-			if stamp != key {
-				flush()
-				key = stamp
+	var result strings.Builder
+	warnings := map[string]bool{}
+	latestDiscovery, latestWait := -1, -1
+	finishedScan := false
+	for i, line := range lines[start:] {
+		if strings.Contains(line, "发现媒体 ") {
+			latestDiscovery = i
+		}
+		if strings.Contains(line, "正在枚举媒体，") {
+			latestWait = i
+		}
+		if strings.Contains(line, "扫描发现 ") {
+			finishedScan = true
+		}
+	}
+	for i, line := range lines[start:] {
+		message := line
+		stamp := ""
+		if strings.HasPrefix(line, "[") {
+			if end := strings.Index(line, "] "); end >= 0 {
+				message = line[end+2:]
+				stamp = line[:end+2]
 			}
-			pending = line
-		} else {
-			flush()
-			key = ""
+		}
+		if strings.HasPrefix(message, "发现媒体 ") && (finishedScan || i != latestDiscovery) {
+			continue
+		}
+		if strings.HasPrefix(message, "正在枚举媒体，") && i != latestWait {
+			continue
+		}
+		lower := strings.ToLower(message)
+		if strings.Contains(lower, "warning") {
+			if warnings[message] {
+				continue
+			}
+			warnings[message] = true
+		}
+		if strings.Contains(lower, "warning") || strings.Contains(lower, "error") || strings.Contains(message, "失败") {
+			result.WriteString(line + "\n")
+			continue
+		}
+		noise := false
+		for _, prefix := range []string{"[", "frame=", "size=", "Deleting original file ", "任务：", "测试模式：", "平台标题语言：", "媒体地址：", "下载工作目录：", "读取下载元数据；", "主任务已开始处理；"} {
+			if strings.HasPrefix(message, prefix) {
+				noise = true
+				break
+			}
+		}
+		if noise || strings.TrimSpace(message) == "" {
+			continue
+		}
+		if strings.HasPrefix(message, "下载完成；保存文件：") {
+			files := strings.Split(strings.TrimPrefix(message, "下载完成；保存文件："), "，")
+			line = stamp + fmt.Sprintf("下载完成；保存 %d 个文件", len(files))
+		}
+		if strings.HasPrefix(message, "主任务：复用已下载视频：") {
+			line = stamp + "主任务：复用已下载视频"
+		}
+		if strings.ContainsFunc(message, func(r rune) bool { return unicode.Is(unicode.Han, r) }) {
 			result.WriteString(line + "\n")
 		}
 	}
-	flush()
 	return result.String()
 }

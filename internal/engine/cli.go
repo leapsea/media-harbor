@@ -17,9 +17,10 @@ import (
 	"time"
 )
 
-// CLI 只依赖运行数据目录，不直接访问数据库或 HTTP。
+// CLI 通过只读付费策略作下载决策，不直接访问数据库。
 type CLI struct {
-	DataDir string
+	DataDir    string
+	PaidPolicy domain.PaidVideoPolicy
 }
 
 // run 使用 Context 使任务取消和服务停止能终止下载进程。
@@ -61,6 +62,9 @@ func (c CLI) common(s domain.Subscription) []string {
 	args := []string{"--ignore-config"}
 	if s.Platform == "youtube" {
 		args = append(args, "--js-runtimes", "node", "--progress-delta", strconv.Itoa(int(config.DownloadLogInterval/time.Second)))
+		if s.RequestLanguage != "" {
+			args = append(args, "--extractor-args", "youtube:lang="+s.RequestLanguage)
+		}
 	}
 	if s.Platform == "instagram" {
 		args[0] = "--config-ignore"
@@ -92,7 +96,8 @@ func (c CLI) Scan(ctx context.Context, s domain.Subscription, itemLimit int, log
 			args = append(args, "--playlist-end", strconv.Itoa(itemLimit))
 		}
 		log("使用 yt-dlp 逐条枚举媒体，发现后立即加入下载队列")
-		args = append(args, "--dump-json", "--flat-playlist", "--", s.URL)
+		// 会员视频即使没有可下载格式也保留索引，交由下载阶段记录失败或跳过。
+		args = append(args, "--dump-json", "--flat-playlist", "--ignore-no-formats-error", "--", s.URL)
 	} else {
 		if itemLimit > 0 {
 			args = append(args, "--range", "1-"+strconv.Itoa(itemLimit))
@@ -107,6 +112,7 @@ func (c CLI) Scan(ctx context.Context, s domain.Subscription, itemLimit int, log
 
 // youtubeEntry 同时支持频道、播放列表和单视频元数据。
 type youtubeEntry struct {
+	Availability  string         `json:"availability"`
 	ID            string         `json:"id"`
 	Title         string         `json:"title"`
 	URL           string         `json:"url"`
@@ -161,7 +167,7 @@ func parseYouTube(raw []byte) (domain.ScanResult, error) {
 		if date.IsZero() && v.Timestamp != 0 {
 			date = time.Unix(int64(v.Timestamp), 0)
 		}
-		result.Items = append(result.Items, domain.Content{RemoteID: v.ID, URL: u, Title: v.Title, Published: date})
+		result.Items = append(result.Items, domain.Content{RemoteID: v.ID, URL: u, Title: v.Title, Published: date, ChannelID: v.ChannelID, Availability: v.Availability})
 	}
 	visit(root)
 	return result, nil
@@ -230,7 +236,11 @@ func parseInstagram(raw []byte) (domain.ScanResult, error) {
 		if date.IsZero() {
 			date = parseDate(str(m["post_date"]))
 		}
-		result.Items = append(result.Items, domain.Content{RemoteID: id + "-" + strconv.Itoa(num), URL: u, Title: str(m["description"]), Published: date, Asset: num})
+		mediaType := "photo"
+		if str(m["extension"]) == "mp4" || str(m["video_url"]) != "" {
+			mediaType = "video"
+		}
+		result.Items = append(result.Items, domain.Content{RemoteID: id + "-" + strconv.Itoa(num), URL: u, Title: str(m["description"]), Published: date, Asset: num, MediaType: mediaType})
 	}
 	return result, scanErr
 }
@@ -266,134 +276,33 @@ func (c CLI) Download(ctx context.Context, s domain.Subscription, item domain.Co
 	if s.Platform == "instagram" {
 		if inventory.Video() != "" || inventory.Thumbnail() {
 			log("复用已下载的 Instagram 媒体")
+			transfer(log, completedTransfer("media", inventory))
 			return nil
 		}
 		args = append(args, "-D", dir, "-f", "{post_id}_{num}.{extension}", "--filter", "num == "+strconv.Itoa(item.Asset), "--", item.URL)
 		var output strings.Builder
 		var outputMu sync.Mutex
+		progressOutput := transferLog(log, "media", 0)
 		// stdout 与 stderr 由不同复制协程回调，共享诊断文本需要同步。
-		args = append([]string{"-u", "-c", instagramScript("import gallery_dl\ngallery_dl.main()\n")}, args...)
+		transfer(log, domain.TransferProgress{Kind: "media", Status: "running"})
+		args = append([]string{"-u", "-c", instagramScript(instagramProgress + "\ninstall_instagram_progress()\nimport gallery_dl\ngallery_dl.main()\n")}, args...)
 		_, e := run(ctx, "python3", args, func(message string) {
 			outputMu.Lock()
 			output.WriteString(message)
 			outputMu.Unlock()
-			log(message)
+			progressOutput(message)
 		}, false)
 		if e != nil && strings.Contains(output.String(), "redirect to login page") {
 			return fmt.Errorf("Instagram 下载需要登录：请在系统设置中编辑并保存有效 Cookie：%w", e)
 		}
-		return e
-	}
-	// 单视频二次读取元数据获得发布日期，频道的扁平扫描可能没有日期。
-	log("读取下载元数据；进度百分比仅表示当前媒体流，所有流下载和后处理成功后任务才完成")
-	metadataArgs := append(append([]string{}, args...), "--dump-single-json", "--no-playlist", "--no-simulate", "--skip-download")
-	// YouTube 仅在启用自动字幕提取时展开翻译语言。
-	// 排除全部下载语言，只收集清单，避免元数据覆盖参数提前改写已有字幕。
-	if o.AutoSubtitles {
-		metadataArgs = append(metadataArgs, "--write-auto-subs", "--sub-langs", "all,-.*")
-	}
-	if o.Metadata || o.Comments {
-		metadataArgs = append(metadataArgs, "--write-info-json", "--force-overwrites", "-o", filepath.Join(dir, "%(title)s-%(id)s.%(ext)s"))
-	}
-	if o.Comments {
-		metadataArgs = append(metadataArgs, "--write-comments")
-	}
-	log("刷新元数据及所选评论；已有媒体文件保持不变")
-	metadata, e := run(ctx, "yt-dlp", append(metadataArgs, "--", item.URL), log, true)
-	if e != nil {
-		return e
-	}
-	if e = os.WriteFile(filepath.Join(dir, ".metadata.json"), metadata, 0644); e != nil {
-		return e
-	}
-	// 媒体与元数据分别执行，强制覆盖仅用于可变的 info JSON。
-	mainOptions := o
-	mainOptions.Video = (o.Video || (o.ExtractAudio && inventory.Audio(o.AudioFormat, true) == "")) && inventory.Video() == ""
-	mainOptions.ExtractAudio = false
-	mainOptions.Metadata = false
-	mainOptions.Comments = false
-	mainOptions.Thumbnail = o.Thumbnail && !inventory.Thumbnail()
-	if o.Subtitles || o.AutoSubtitles {
-		mainOptions.SubtitleLanguages = inventory.missingSubtitles(o, metadata)
-		if mainOptions.SubtitleLanguages == "" {
-			mainOptions.Subtitles = false
-			mainOptions.AutoSubtitles = false
-		}
-	}
-	if !mainOptions.Video && inventory.Video() != "" && (o.Video || o.ExtractAudio) {
-		log("复用已下载视频：" + inventory.Video())
-	}
-	if mainOptions.Video || mainOptions.Subtitles || mainOptions.AutoSubtitles || mainOptions.Thumbnail {
-		base := append(append([]string{}, args...), youtubeArgs(mainOptions, dir)...)
-		log("补齐缺失的视频、字幕或缩略图")
-		if _, e = run(ctx, "yt-dlp", append(base, "--", item.URL), log, false); e != nil {
-			return youtubeDownloadError("主视频及附加文件", e)
-		}
-	}
-
-	// 额外音频是另一次远程下载；与 FFmpeg 从本地视频提取分开。
-	if o.ExtraAudio && inventory.Audio(o.AudioFormat, false) == "" {
-		audio := append(append([]string{}, args...), "--no-playlist", "-f", "bestaudio/best", "-x", "--audio-format", o.AudioFormat, "--audio-quality", o.AudioQuality, "-o", filepath.Join(dir, "%(title)s-%(id)s.audio.%(ext)s"), "--", item.URL)
-		log("开始额外下载音频")
-		if _, e = run(ctx, "yt-dlp", audio, log, false); e != nil {
-			return youtubeDownloadError("额外音频", e)
-		}
-		log("额外音频处理完成")
-	}
-	if o.ExtraAudio && inventory.Audio(o.AudioFormat, false) != "" {
-		log("复用已下载音频：" + inventory.Audio(o.AudioFormat, false))
-	}
-	if o.ExtractAudio && inventory.Audio(o.AudioFormat, true) != "" {
-		log("复用本地提取音频：" + inventory.Audio(o.AudioFormat, true))
-	}
-	if o.ExtractAudio && inventory.Audio(o.AudioFormat, true) == "" {
-		entries, e := os.ReadDir(dir)
 		if e != nil {
-			return e
-		}
-		found := false
-		inputs := []string{}
-		if inventory.Video() != "" {
-			inputs = append(inputs, inventory.Video())
+			transfer(log, domain.TransferProgress{Kind: "media", Status: "failed", Error: e.Error()})
 		} else {
-			for _, f := range entries {
-				inputs = append(inputs, filepath.Join(dir, f.Name()))
-			}
+			transfer(log, completedTransfer("media", Inventory(item, dir)))
 		}
-		for _, in := range inputs {
-			ext := strings.ToLower(filepath.Ext(in))
-			if ext != ".mp4" && ext != ".mkv" && ext != ".webm" && ext != ".mov" {
-				continue
-			}
-			found = true
-			out := filepath.Join(dir, strings.TrimSuffix(filepath.Base(in), ext)+".extracted."+o.AudioFormat)
-			a := []string{"-y", "-i", in, "-vn"}
-			// m4a 采用 AAC；最高质量使用与 yt-dlp 相同的可变码率档。
-			if o.AudioFormat == "m4a" {
-				a = append(a, "-c:a", "aac")
-				if o.AudioQuality == "0" {
-					a = append(a, "-q:a", config.AACBestQuality)
-				} else {
-					a = append(a, "-b:a", o.AudioQuality)
-				}
-			}
-			if o.AudioFormat == "mp3" {
-				if o.AudioQuality == "0" {
-					a = append(a, "-q:a", "0")
-				} else {
-					a = append(a, "-b:a", o.AudioQuality)
-				}
-			}
-			a = append(a, out)
-			if _, e = run(ctx, "ffmpeg", a, log, false); e != nil {
-				return e
-			}
-		}
-		if !found {
-			return fmt.Errorf("本地提取音频需要已下载的视频")
-		}
+		return e
 	}
-	return nil
+	return c.downloadYouTube(ctx, s, item, o, dir, log)
 }
 
 // youtubeArgs 保持字幕、评论和附加文件选项可组合。
@@ -432,19 +341,33 @@ func youtubeArgs(o domain.YouTubeOptions, dir string) []string {
 // PublicationDate 从下载前的真实视频元数据读取发布日期。
 // 内部元数据文件不作为用户下载产物归档。
 func PublicationDate(dir string) time.Time {
-	raw, e := os.ReadFile(filepath.Join(dir, ".metadata.json"))
-	if e != nil {
-		return time.Time{}
-	}
-	var v youtubeEntry
-	if json.Unmarshal(raw, &v) != nil {
-		return time.Time{}
-	}
+	v := videoMetadata(dir)
 	t, _ := time.Parse("20060102", v.UploadDate)
 	if t.IsZero() && v.Timestamp != 0 {
 		t = time.Unix(int64(v.Timestamp), 0)
 	}
 	return t
+}
+
+// PublicationTitle 使用实际下载清单里的本地化标题，避免历史沿用早期扫描语言。
+func PublicationTitle(dir string) string { return videoMetadata(dir).Title }
+
+// PublicationAccess 在文件复用及失败后同步平台提供的频道与付费标识。
+func PublicationAccess(dir string) (string, string) {
+	info := videoMetadata(dir)
+	return info.ChannelID, info.Availability
+}
+
+func videoMetadata(dir string) youtubeEntry {
+	raw, e := os.ReadFile(filepath.Join(dir, ".metadata.json"))
+	if e != nil {
+		return youtubeEntry{}
+	}
+	var v youtubeEntry
+	if json.Unmarshal(raw, &v) != nil {
+		return youtubeEntry{}
+	}
+	return v
 }
 
 // Versions 将 FFmpeg 单独检测，不与 Python 包版本混合。

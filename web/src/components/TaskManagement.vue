@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { t } from '../i18n'
-import { computed } from 'vue'
+import { computed, defineAsyncComponent, ref } from 'vue'
 import { api, useMediaStore } from '../stores/media'
 import type { Subscription } from '../types'
 import { taskMode } from '../utils/taskMode'
@@ -13,6 +13,9 @@ import { formatDate } from '../utils/formatDate'
 const props = defineProps<{ labels: Record<string, string> }>()
 const emit = defineEmits<{ log: [id: number]; edit: [task: Subscription] }>()
 const store = useMediaStore()
+/** 详情只在打开时加载，管理列表仍按每个配置一行展示。 */
+const TaskDetails = defineAsyncComponent(() => import('./TaskDetails.vue'))
+const detailTask = ref<Subscription | null>(null)
 const { page, size, items } = usePagination(() => store.subscriptions, () => store.settings!.ui.task_page_size)
 /** 轮询后只构造一次索引，模板中多次读取状态不反复遍历队列。 */
 const groups = computed(() => new Map(store.taskGroups.map(item => [item.subscription_id, item])))
@@ -47,13 +50,14 @@ async function action(id: number, kind: 'cancel' | 'retry') {
     <td class="task-name"><div class="task-author"><img v-if="task.avatar_url" class="task-avatar" :src="task.avatar_url" alt="" loading="lazy"><div class="task-author-text"><strong>{{ task.display_name }}</strong><a :href="task.url" target="_blank" rel="noreferrer" :title="task.url">{{ task.url }}</a></div></div></td>
     <td><span class="badge">{{ task.platform === 'youtube' ? 'YouTube' : 'Instagram' }}</span><small class="help">{{ schedule(task) }}</small><small v-if="!isContent(task)" class="help">{{ !group(task.id) ? t("首次启动后启用周期") : task.enabled ? t('下次 {time}', { time: formatDate(task.next_run) }) : t("定时已暂停") }}</small></td>
     <td><span class="badge" :class="group(task.id)?.status">{{ t(props.labels[group(task.id)?.status || ''] || t("未开始")) }}</span><small v-if="group(task.id)?.scan_status" class="help">{{ isContent(task) ? t("内容解析") : t("扫描") }} · {{ t(props.labels[group(task.id)!.scan_status]) }}</small></td>
-    <td><strong>{{ group(task.id)?.counts.completed || 0 }} / {{ group(task.id)?.total || 0 }}</strong><small class="help">{{ t('待执行 {queued} · 运行 {running} · 失败 {failed}', { queued: group(task.id)?.counts.queued || 0, running: group(task.id)?.counts.running || 0, failed: group(task.id)?.counts.failed || 0 }) }}</small></td>
+    <td><strong>{{ group(task.id)?.counts.completed || 0 }} / {{ group(task.id)?.total || 0 }}</strong><small class="help">{{ t('待执行 {queued} · 运行 {running} · 失败 {failed}', { queued: group(task.id)?.counts.queued || 0, running: group(task.id)?.counts.running || 0, failed: group(task.id)?.counts.failed || 0 }) }}<template v-if="group(task.id)?.counts.skipped"> · {{ t('已跳过 {count}', { count: group(task.id)!.counts.skipped }) }}</template></small></td>
     <td>{{ formatDate(group(task.id)?.updated_at || task.created_at) }}</td>
     <td><div class="actions">
      <template v-if="!isContent(task)"><button :disabled="store.busy" @click="scan(task.id, 'full')">{{ t("全量初始化") }}</button><button :disabled="store.busy" @click="scan(task.id, 'scan')">{{ t("增量扫描") }}</button><button :disabled="store.busy" @click="scan(task.id, 'catchup')">{{ t("补全下载") }}</button></template>
      <button @click="emit('log', task.id)">{{ t("日志") }}</button>
+     <button @click="detailTask = task">{{ t('任务详情') }}</button>
      <button v-if="['running', 'queued'].includes(group(task.id)?.status || '')" :disabled="store.busy" @click="action(task.id, 'cancel')">{{ t("取消") }}</button>
-     <button v-if="group(task.id)?.counts.failed || group(task.id)?.counts.cancelled || ['failed', 'cancelled'].includes(group(task.id)?.scan_status || '')" :disabled="store.busy" @click="action(task.id, 'retry')">{{ t("重试") }}</button>
+     <button v-if="group(task.id)?.counts.failed || group(task.id)?.counts.cancelled || group(task.id)?.counts.skipped || ['failed', 'cancelled'].includes(group(task.id)?.scan_status || '')" :disabled="store.busy" @click="action(task.id, 'retry')">{{ t("重试") }}</button>
      <button @click="emit('edit', task)">{{ t("编辑") }}</button>
      <button v-if="!isContent(task) && task.schedule" :disabled="store.busy" @click="store.mutate(() => api(`/subscriptions/${task.id}`, 'PUT', { ...task, enabled: !task.enabled }), task.enabled ? t('定时已暂停') : t('定时已恢复'))">{{ task.enabled ? t("暂停定时") : t("恢复定时") }}</button>
      <button class="danger" :disabled="store.busy" @click="store.mutate(() => api(`/subscriptions/${task.id}`, 'DELETE'), t('任务已删除，文件继续保留'))">{{ t("删除") }}</button>
@@ -62,4 +66,5 @@ async function action(id: number, kind: 'cancel' | 'retry') {
   </table></div>
   <ListPagination v-model:page="page" v-model:size="size" :total="store.subscriptions.length" />
  </section>
+ <TaskDetails v-if="detailTask" :task="detailTask" @close="detailTask = null" />
 </template>

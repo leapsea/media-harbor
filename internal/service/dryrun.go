@@ -30,6 +30,7 @@ func (a *App) DryRun(ctx context.Context, sub domain.Subscription, log func(stri
 		return err
 	}
 	options := settings.YouTube
+	sub.RequestLanguage = settings.UI.Language
 	// 当前表单的覆盖选项优先，未勾选覆盖时使用已有系统设置快照。
 	if sub.YouTube != nil {
 		options = *sub.YouTube

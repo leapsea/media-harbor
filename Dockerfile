@@ -34,7 +34,7 @@ RUN GALLERY_DL_VERSION="${GALLERY_DL_VERSION:-$(python3 -c 'import json; print(j
  && FFMPEG_VERSION="${FFMPEG_VERSION:-$(python3 -c 'import json; print(json.load(open("/tmp/build-release.json"))["ffmpeg"])')}" \
  && apk add --no-cache "ffmpeg=${FFMPEG_VERSION}" \
  && python3 -m venv /opt/engines \
- && /opt/engines/bin/pip install --no-cache-dir "gallery-dl==${GALLERY_DL_VERSION}" "yt-dlp[default]==${YTDLP_VERSION}" \
+ && /opt/engines/bin/pip install --no-cache-dir "gallery-dl==${GALLERY_DL_VERSION}" "yt-dlp[default,curl-cffi]==${YTDLP_VERSION}" \
  && rm /tmp/build-release.json \
  && mkdir -p /app/web /data /logs /downloads /archive \
  && chown -R 1000:1000 /data /logs /downloads /archive

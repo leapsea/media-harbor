@@ -117,6 +117,8 @@ def run_case(name, mounted, readonly_download=False):
         # 源服务器与应用都运行在同一个临时容器，仅提供一秒的测试视频。
         docker("exec", container, "mkdir", "-p", "/data/smoke-source")
         docker("exec", container, "ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=blue:s=160x120:d=1", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-shortest", "-c:v", "mpeg4", "-c:a", "aac", "/data/smoke-source/fixture.mp4")
+        # 同一视频提供中英两份字幕，容器必须按语言优先级只下载中文一份。
+        docker("exec", container, "python3", "-c", "from pathlib import Path; p=Path('/data/smoke-source'); (p/'page.html').write_text('<html><meta charset=\"UTF-8\"><title>测试视频</title><video controls><source src=\"fixture.mp4\" type=\"video/mp4\"><track kind=\"subtitles\" src=\"zh-CN.vtt\" srclang=\"zh-CN\"><track kind=\"subtitles\" src=\"en.vtt\" srclang=\"en\"></video></html>'); [(p/(lang+'.vtt')).write_text('WEBVTT\\n\\n00:00.000 --> 00:01.000\\n'+lang+'\\n') for lang in ['zh-CN','en']]")
         source = subprocess.Popen(["docker", "exec", container, "python3", "-m", "http.server", "8001", "--bind", "127.0.0.1", "--directory", "/data/smoke-source"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         # 循环确认源服务器，不使用外网或真实平台账户。
         for _ in range(30):
@@ -127,8 +129,8 @@ def run_case(name, mounted, readonly_download=False):
                 time.sleep(0.1)
         settings = request("/settings")
         options = settings["youtube"]
-        options.update(format="b", extra_audio=True, extract_audio=True, metadata=True, comments=False, subtitles=False, auto_subtitles=False, thumbnail=False)
-        payload = dict(platform="youtube", url="http://127.0.0.1:8001/fixture.mp4", display_name="fixture", enabled=False, schedule="", template="", cookie=False, archive=mounted and not readonly_download, youtube=options)
+        options.update(format="b", extra_audio=True, extract_audio=True, metadata=True, comments=False, subtitles=True, subtitle_languages="zh.*,en", auto_subtitles=False, thumbnail=False)
+        payload = dict(platform="youtube", url="http://127.0.0.1:8001/page.html", display_name="fixture", enabled=False, schedule="", template="", cookie=False, archive=mounted and not readonly_download, youtube=options)
         sub = request("/subscriptions", "POST", payload)
         request(f"/subscriptions/{sub['id']}/scan?kind=full", "POST")
         wait_until(lambda: request("/tasks"), lambda ts: any(t["kind"] == "full" and t["status"] == "completed" for t in ts), stage=f"{name} 扫描完成")
@@ -139,8 +141,20 @@ def run_case(name, mounted, readonly_download=False):
         else:
             items = wait_until(download_state, lambda cs: len(cs) == 1 and cs[0]["status"] == "completed" and (not mounted or cs[0]["archived"]), stage=f"{name} 下载与归档完成")
             paths = items[0]["paths"]
+            assert "测试视频" in items[0]["title"] and all("测试视频" in Path(p).name for p in paths), items
             for suffix in (".mp4", ".audio.m4a", ".extracted.m4a", ".info.json"):
                 assert any(p.endswith(suffix) for p in paths), paths
+            captions = [p for p in paths if p.endswith('.vtt')]
+            assert len(captions) == 1 and captions[0].endswith('.zh-CN.vtt'), paths
+            log = request(f"/subscriptions/{sub['id']}/log")["log"]
+            assert log.index("主任务：开始下载视频") < log.index("附属任务 [字幕 zh-CN]：开始") < log.index("附属任务 [额外音频]：完成") < log.index("附属任务全部结束"), log
+            assert "[download]" not in log and "@transfer " not in log, log
+            # 真实产物大小与持久阶段对应，附属项不单独创建调度任务。
+            details = request(f"/subscriptions/{sub['id']}/details")
+            assert len(details["items"]) == 1 and details["items"][0]["status"] == "completed", details
+            parts = {p["kind"]: p for p in details["items"][0]["parts"]}
+            assert set(parts) == {"video", "metadata", "subtitles", "audio", "extracted"}, parts
+            assert all(p["status"] == "completed" and p["bytes_total"] > 0 and p["percent"] == 100 for p in parts.values()), parts
             assert all(p.startswith("/archive/" if mounted else "/downloads/") for p in paths), paths
             request(f"/subscriptions/{sub['id']}/scan", "POST")
             wait_until(lambda: request("/tasks"), lambda ts: len(ts) == 3 and all(t["status"] == "completed" for t in ts), stage=f"{name} 增量去重")
@@ -151,6 +165,7 @@ def run_case(name, mounted, readonly_download=False):
                 wait_until(lambda: request("/subscriptions"), lambda ss: len(ss) == 1, stage=f"{name} 重启恢复")
                 persisted = request("/contents")[0]
                 assert persisted["paths"] == paths and persisted["archived"]
+                assert request(f"/subscriptions/{sub['id']}/details")["items"][0]["parts"] == details["items"][0]["parts"]
                 for path in paths:
                     docker("exec", container, "test", "-f", path)
         print(f"PASS {name}: UID/GID、目录状态、引擎版本、队列与文件流程")

@@ -60,7 +60,7 @@ yt_dlp.main()
 func TestChineseSubtitlePreference(t *testing.T) {
 	metadata := []byte(`{"subtitles":{"zh-CN":[{"url":"https://example.test/captions?lang=zh-CN"}],"en":[{}]},"automatic_captions":{"zh-CN":[{"url":"https://example.test/captions?lang=zh-CN"}],"zh-Hans-zh-CN":[{"url":"https://example.test/captions?tlang=zh-Hans"}],"zh-Hant-zh-CN":[{"url":"https://example.test/captions?tlang=zh-Hant"}]}}`)
 	options := domain.YouTubeOptions{Subtitles: true, AutoSubtitles: true, SubtitleLanguages: "zh.*,en"}
-	if got := (ArtifactInventory{}).missingSubtitles(options, metadata); got != "en,zh-CN" {
+	if got := (ArtifactInventory{}).missingSubtitles(options, metadata); got != "zh-CN" {
 		t.Fatal("原始中文未排除翻译版本", got)
 	}
 	options.Subtitles = false
@@ -76,7 +76,7 @@ func TestChineseSubtitlePreference(t *testing.T) {
 		t.Fatal("已有原始中文仍请求翻译字幕", got)
 	}
 	fallback := []byte(`{"automatic_captions":{"zh-Hans":[{"url":"https://example.test/captions?lang=en&tlang=zh-Hans"}],"zh-Hant":[{"url":"https://example.test/captions?lang=en&tlang=zh-Hant"}]}}`)
-	if got := (ArtifactInventory{}).missingSubtitles(options, fallback); got != "zh-Hans,zh-Hant" {
+	if got := (ArtifactInventory{}).missingSubtitles(options, fallback); got != "zh-Hans" {
 		t.Fatal("没有原始中文时未保留翻译回退", got)
 	}
 	options.SubtitleLanguages = "zh.*,-zh-Hant"
@@ -87,5 +87,9 @@ func TestChineseSubtitlePreference(t *testing.T) {
 	options.Subtitles = true
 	if got := (ArtifactInventory{}).missingSubtitles(options, metadata); strings.Contains(got, "zh") || got != "en" {
 		t.Fatal("未选择中文时改变了字幕语言", got)
+	}
+	options.SubtitleLanguages = "en,zh.*"
+	if got := (ArtifactInventory{}).missingSubtitles(options, metadata); got != "en" {
+		t.Fatal("未遵循配置语言顺序", got)
 	}
 }

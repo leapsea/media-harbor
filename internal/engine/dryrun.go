@@ -51,7 +51,8 @@ func (c CLI) DryRun(ctx context.Context, sub domain.Subscription, options domain
 		cookie = c.CookiePath(sub.Platform)
 	}
 	if err = encoder.Encode(map[string]any{"subscription": sub, "options": options, "limit": limit,
-		"cookie": cookie, "gallery_config": filepath.Join(c.DataDir, "gallery-dl.json"),
+		"language": sub.RequestLanguage,
+		"cookie":   cookie, "gallery_config": filepath.Join(c.DataDir, "gallery-dl.json"),
 		"user_agent": config.InstagramRequestUserAgent(), "headers": json.RawMessage(config.InstagramHeaders), "probe_bytes": config.DryRunProbeBytes, "manifest_depth": config.DryRunManifestDepth}); err != nil {
 		cancel()
 		_ = cmd.Wait()

@@ -13,6 +13,12 @@ func (a *App) retryContentLocked(existing domain.Content, discovered domain.Cont
 	existing.Title = discovered.Title
 	existing.Published = discovered.Published
 	existing.Asset = discovered.Asset
+	if discovered.ChannelID != "" {
+		existing.ChannelID = discovered.ChannelID
+	}
+	if discovered.Availability != "" {
+		existing.Availability = discovered.Availability
+	}
 	existing.Status = "queued"
 	existing.Error = ""
 	if err := a.Repo.SaveContent(&existing); err != nil {
@@ -84,6 +90,25 @@ func (a *App) reconcileScanLocked(subscriptionID int64, items []domain.Content, 
 		options := settings.YouTube
 		if sub.YouTube != nil {
 			options = *sub.YouTube
+		}
+		// 补全不是权限重置；首次失败及跳过的付费条目保持原状态。
+		access := existing
+		if item.Availability != "" {
+			access.Availability = item.Availability
+		}
+		if item.ChannelID != "" {
+			access.ChannelID = item.ChannelID
+		}
+		if sub.Platform == "youtube" && domain.IsPaidAvailability(access.Availability) {
+			blocked, readErr := a.Repo.PaidFailure(paidChannel(access, sub))
+			if readErr != nil {
+				err = readErr
+				return
+			}
+			if blocked > 0 {
+				skipped++
+				continue
+			}
 		}
 		if existing.Status == "completed" && !engine.NeedsSupplement(sub.Platform, existing, options) {
 			completed++

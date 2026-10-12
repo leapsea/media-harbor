@@ -211,15 +211,36 @@ func (a *App) CancelTask(id int64) error {
 func (a *App) RetryTask(id int64) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.retryTaskLocked(id)
+}
+
+// retryTaskLocked 供批量重试在同一锁内恢复，避免重新失败与解除策略交错。
+func (a *App) retryTaskLocked(id int64) error {
 	t, e := a.Repo.Task(id)
 	if e != nil {
 		return e
 	}
-	if t.Status != "failed" && t.Status != "cancelled" {
-		return fmt.Errorf("只能重试失败或取消的任务")
+	if t.Status != "failed" && t.Status != "cancelled" && t.Status != "skipped" {
+		return fmt.Errorf("只能重试失败、取消或跳过的任务")
 	}
 	if a.active[id] != nil {
 		return fmt.Errorf("任务正在停止，请稍后重试")
+	}
+	// 只有显式重试付费条目才解除频道策略，普通视频重试不改变限制。
+	if t.ContentID != 0 {
+		content, err := a.Repo.Content(t.ContentID)
+		if err != nil {
+			return err
+		}
+		sub, err := a.Repo.Subscription(t.SubscriptionID)
+		if err != nil {
+			return err
+		}
+		if sub.Platform == "youtube" && domain.IsPaidAvailability(content.Availability) {
+			if err = a.Repo.AllowPaidVideos(paidChannel(content, sub)); err != nil {
+				return err
+			}
+		}
 	}
 	t.Status = "queued"
 	t.Error = ""
@@ -406,6 +427,19 @@ func (a *App) tick(ctx context.Context) error {
 		if !exists || t.Status != "queued" || (t.ContentID == 0 && busyScans[s.ID]) {
 			continue
 		}
+		// 范围外测试条目保持原样；策略跳过不占用并发名额，也无需工作目录。
+		if t.Kind == "download" {
+			if settings.Debug.TestItemLimit > 0 && !allowedDownloads[t.ID] {
+				continue
+			}
+			skipped, err := a.skipBlockedPaidLocked(&t, s)
+			if err != nil {
+				return err
+			}
+			if skipped {
+				continue
+			}
+		}
 		limit := settings.YouTubeConcurrent
 		if s.Platform == "instagram" {
 			limit = settings.InstagramConcurrent
@@ -423,6 +457,7 @@ func (a *App) tick(ctx context.Context) error {
 		t.FinishedAt = time.Time{}
 		t.Error = ""
 		t.Attempts++
+		t.Progress = nil
 		if e = a.Repo.SaveTask(&t); e != nil {
 			cancel()
 			return e
@@ -460,6 +495,7 @@ func (a *App) tick(ctx context.Context) error {
 // 引擎输出独立写入任务日志，JSON 扫描结果直接转换为内容。
 // 任务被删除或取消后，后台结果不会再次提交为完成。
 func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription, settings domain.Settings) {
+	s.RequestLanguage = settings.UI.Language
 	path := a.LogPath(t)
 	// 新库复用任务编号时，新任务首次执行不能混入旧库日志；重试继续追加。
 	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
@@ -486,6 +522,9 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 		}
 	}()
 	log := func(msg string) {
+		if a.recordProgress(t.ID, msg) {
+			return
+		}
 		a.logMu.Lock()
 		defer a.logMu.Unlock()
 		for _, line := range strings.Split(strings.TrimSpace(msg), "\n") {
@@ -665,9 +704,35 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 	// 工作目录与最终保存位置分别记录，便于查找尚未成功的文件。
 	log("下载工作目录：" + dir)
 	e = a.Engine.Download(ctx, s, c, options, dir, log)
+	downloadErr := e
+	// 以当前语言的下载元数据刷新标题，已存在的媒体文件也无需重新下载。
+	if s.Platform == "youtube" {
+		if title := engine.PublicationTitle(dir); title != "" {
+			c.Title = title
+		}
+		channel, availability := engine.PublicationAccess(dir)
+		if channel != "" {
+			c.ChannelID = channel
+		}
+		if availability != "" {
+			c.Availability = availability
+		}
+	}
 	a.mu.Lock()
 	current, readErr := a.Repo.Task(t.ID)
 	if readErr == nil && current.Status == "running" && ctx.Err() == nil {
+		var skipped *domain.PaidVideoSkippedError
+		policySkip := errors.As(downloadErr, &skipped)
+		// 只有实际引擎失败才阻断后续付费视频，本地归位失败不改变策略。
+		if s.Platform == "youtube" && downloadErr != nil && !policySkip && domain.IsPaidAvailability(c.Availability) {
+			if channel := paidChannel(c, s); channel != "" {
+				if blockErr := a.Repo.BlockPaidVideos(channel, t.ID); blockErr != nil {
+					log("保存付费跳过策略失败：" + blockErr.Error())
+				} else {
+					log("付费视频下载失败：该 UP 主后续付费视频将直接跳过")
+				}
+			}
+		}
 		// 即使后续阶段失败，也记录已经完成的产物，重试只补剩余部分。
 		files, fileErr := taskFiles(dir)
 		if fileErr == nil && len(files) > 0 {
@@ -687,6 +752,12 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 		} else {
 			c.Status = "failed"
 			c.Error = e.Error()
+			if policySkip {
+				c.Status = "skipped"
+				// 丢弃本次解析缓存，只移除空工作目录，已有媒体和分片继续保留供重试。
+				_ = os.Remove(filepath.Join(dir, ".metadata.json"))
+				_ = os.Remove(dir)
+			}
 		}
 		if saveErr := a.Repo.SaveContent(&c); saveErr != nil {
 			e = saveErr
@@ -722,6 +793,11 @@ func (a *App) finish(t domain.Task, taskErr error) {
 	if taskErr != nil {
 		current.Status = "failed"
 		current.Error = taskErr.Error()
+		var skipped *domain.PaidVideoSkippedError
+		if errors.As(taskErr, &skipped) {
+			current.Status = "skipped"
+			current.Progress = []domain.TransferProgress{{Kind: "video", Status: "skipped"}}
+		}
 	}
 	if errors.Is(taskErr, context.Canceled) {
 		current.Status = "queued"

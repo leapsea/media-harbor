@@ -27,22 +27,24 @@ type YouTubeOptions struct {
 
 // Subscription 的 DisplayName 固定，CurrentName 在扫描时更新。
 type Subscription struct {
-	ID          int64           `json:"id"`
-	Platform    string          `json:"platform"`
-	URL         string          `json:"url"`
-	Mode        string          `json:"mode"`
-	StableID    string          `json:"stable_id"`
-	DisplayName string          `json:"display_name"`
-	CurrentName string          `json:"current_name"`
-	Enabled     bool            `json:"enabled"`
-	Schedule    string          `json:"schedule"`
-	Template    string          `json:"template"`
-	Archive     bool            `json:"archive"`
-	YouTube     *YouTubeOptions `json:"youtube"`
-	LastScan    time.Time       `json:"last_scan"`
-	LastSuccess time.Time       `json:"last_success"`
-	NextRun     time.Time       `json:"next_run"`
-	CreatedAt   time.Time       `json:"created_at"`
+	// RequestLanguage 由执行时的系统设置提供，不作为任务配置保存或暴露给 API。
+	RequestLanguage string          `json:"-"`
+	ID              int64           `json:"id"`
+	Platform        string          `json:"platform"`
+	URL             string          `json:"url"`
+	Mode            string          `json:"mode"`
+	StableID        string          `json:"stable_id"`
+	DisplayName     string          `json:"display_name"`
+	CurrentName     string          `json:"current_name"`
+	Enabled         bool            `json:"enabled"`
+	Schedule        string          `json:"schedule"`
+	Template        string          `json:"template"`
+	Archive         bool            `json:"archive"`
+	YouTube         *YouTubeOptions `json:"youtube"`
+	LastScan        time.Time       `json:"last_scan"`
+	LastSuccess     time.Time       `json:"last_success"`
+	NextRun         time.Time       `json:"next_run"`
+	CreatedAt       time.Time       `json:"created_at"`
 }
 
 // ContentFile 将每个真实文件与其产物标签关联，评论和元数据可共用一个 JSON 文件。
@@ -55,6 +57,9 @@ type ContentFile struct {
 
 // Content 是下载去重的最小单元；Instagram 轮播的每张媒体具有独立 ID。
 type Content struct {
+	ChannelID      string        `json:"channel_id,omitempty"`
+	Availability   string        `json:"availability,omitempty"`
+	MediaType      string        `json:"media_type,omitempty"`
 	ID             int64         `json:"id"`
 	SubscriptionID int64         `json:"subscription_id"`
 	RemoteID       string        `json:"remote_id"`
@@ -70,22 +75,52 @@ type Content struct {
 	Error          string        `json:"error"`
 }
 
-// queued、running、completed、failed、cancelled 是持久任务状态。
-// Task 的状态持久化，运行日志单独存储于运行数据目录。
-type Task struct {
-	ID             int64     `json:"id"`
-	SubscriptionID int64     `json:"subscription_id"`
-	ContentID      int64     `json:"content_id"`
-	Kind           string    `json:"kind"`
-	Status         string    `json:"status"`
-	Attempts       int       `json:"attempts"`
-	Error          string    `json:"error"`
-	CreatedAt      time.Time `json:"created_at"`
-	StartedAt      time.Time `json:"started_at"`
-	FinishedAt     time.Time `json:"finished_at"`
+// IsPaidAvailability 只接受平台的付费标识，普通登录、年龄或地区限制不属于付费视频。
+func IsPaidAvailability(value string) bool {
+	return value == "subscriber_only" || value == "premium_only"
 }
 
-// UISettings 管理界面语言和展示数量，不改变扫描和下载任务的执行范围。
+// PaidVideoPolicy 是下载器的只读权限决策，不向引擎暴露整个仓储。
+type PaidVideoPolicy interface{ PaidFailure(string) (int64, error) }
+
+// PaidVideoSkippedError 表示策略跳过，不是下载失败或下载完成。
+type PaidVideoSkippedError struct {
+	ChannelID    string
+	FailedTaskID int64
+}
+
+func (e *PaidVideoSkippedError) Error() string {
+	return "跳过付费视频：该 UP 主此前有付费视频下载失败"
+}
+
+// queued、running、completed、failed、cancelled、skipped 是持久任务状态。
+// Task 的状态持久化，运行日志单独存储于运行数据目录。
+type Task struct {
+	Progress       []TransferProgress `json:"progress,omitempty"`
+	ID             int64              `json:"id"`
+	SubscriptionID int64              `json:"subscription_id"`
+	ContentID      int64              `json:"content_id"`
+	Kind           string             `json:"kind"`
+	Status         string             `json:"status"`
+	Attempts       int                `json:"attempts"`
+	Error          string             `json:"error"`
+	CreatedAt      time.Time          `json:"created_at"`
+	StartedAt      time.Time          `json:"started_at"`
+	FinishedAt     time.Time          `json:"finished_at"`
+}
+
+// TransferProgress 是一个视频或帖子媒体的实际传输状态，不单独占用队列名额。
+type TransferProgress struct {
+	Title      string  `json:"title,omitempty"`
+	Kind       string  `json:"kind"`
+	Status     string  `json:"status"`
+	BytesTotal int64   `json:"bytes_total"`
+	BytesDone  int64   `json:"bytes_done"`
+	Percent    float64 `json:"percent"`
+	Error      string  `json:"error,omitempty"`
+}
+
+// UISettings 的语言同时用于平台提供的本地化标题，展示数量不改变任务范围。
 type UISettings struct {
 	Language        string `json:"language"`
 	RecentDownloads int    `json:"recent_downloads"`
@@ -148,6 +183,9 @@ type DownloadHistoryRepository interface {
 // Repository 隔离持久化；不采用数据库外键或触发器。
 type Repository interface {
 	DownloadHistoryRepository
+	PaidVideoPolicy
+	BlockPaidVideos(string, int64) error
+	AllowPaidVideos(string) error
 	Subscriptions() ([]Subscription, error)
 	Subscription(int64) (Subscription, error)
 	SaveSubscription(*Subscription) error

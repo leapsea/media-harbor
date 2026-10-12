@@ -10,7 +10,7 @@ services:
     restart: unless-stopped
     user: "${PUID:-1000}:${PGID:-1000}"
     ports:
-      - "${PORT:-8080}:8080"
+      - "${BIND_ADDRESS:-0.0.0.0}:${PORT:-8080}:8080"
     volumes:
       - ${DATA_PATH:-./data}:/data
       - ${DOWNLOAD_PATH:-./downloads}:/downloads

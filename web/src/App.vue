@@ -26,7 +26,7 @@ let polling: ReturnType<typeof setInterval> | undefined
 let refreshError = ''
 const pages = [{ id: 'overview', label: '总览', icon: '◈' }, { id: 'tasks', label: '任务管理', icon: '≡' }, { id: 'history', label: '下载历史', icon: '◷' }, { id: 'settings', label: '系统设置', icon: '⚙' }] as const
 const title = computed(() => pages.find(p => p.id === page.value)?.label)
-const labels: Record<string, string> = { queued: '待执行', running: '运行中', completed: '已完成', failed: '失败', cancelled: '已取消', catchup: '补全下载', scan: '增量扫描', full: '全量初始化', download: '下载', mounted: '已挂载', unmounted: '未挂载', unknown: '未知' }
+const labels: Record<string, string> = { queued: '待执行', running: '运行中', completed: '已完成', failed: '失败', cancelled: '已取消', skipped:'已跳过', catchup: '补全下载', scan: '增量扫描', full: '全量初始化', download: '下载', mounted: '已挂载', unmounted: '未挂载', unknown: '未知' }
 
 /** 页面切换回到顶部，让各个工作台从标题开始显示。 */
 watch(page, () => window.scrollTo({ top: 0 }), { flush: 'post' })
@@ -84,7 +84,7 @@ onUnmounted(() => { if (polling) clearInterval(polling) })
    <div class="sidebar-footer"><span class="online-dot"></span><span v-if="store.dashboard?.version">V{{ store.dashboard.version }}</span></div>
   </aside>
   <main>
-   <header class="page-header"><h1>{{ t(title) }}</h1><button class="primary" :disabled="!store.settings || store.busy" @click="edit(null)"><span>＋</span> {{ t("新增任务") }}</button></header>
+   <header class="page-header"><h1>{{ t(title) }}</h1><button v-if="!['settings', 'overview'].includes(page)" class="primary" :disabled="!store.settings || store.busy" @click="edit(null)"><span>＋</span> {{ t("新增任务") }}</button></header>
    <p v-if="!loaded" class="empty">{{ t("正在加载工作台…") }}</p>
    <template v-if="page === 'overview' && store.dashboard">
     <!-- 概览优先呈现运行数据，统计不附加重复说明。 -->

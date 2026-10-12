@@ -56,7 +56,7 @@ else:
 	}
 	raw, _ := os.ReadFile(trace)
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(lines) != 2 {
+	if len(lines) != 3 {
 		t.Fatalf("unexpected commands=%s", raw)
 	}
 	for i, line := range lines {
@@ -65,7 +65,7 @@ else:
 		if slices.Contains(args, "-x") {
 			t.Fatal("已下载音频被重新下载", args)
 		}
-		if i == 0 && (!slices.Contains(args, "--skip-download") || !slices.Contains(args, "--force-overwrites") || !slices.Contains(args, "--write-comments")) {
+		if i == 0 && (!slices.Contains(args, "--skip-download") || slices.Contains(args, "--write-comments")) {
 			t.Fatal(args)
 		}
 		if i == 0 {
@@ -78,10 +78,12 @@ else:
 			if slices.Contains(args, "--force-overwrites") || slices.Contains(args, "--write-info-json") {
 				t.Fatal("媒体执行包含元数据覆盖", args)
 			}
-			n := slices.Index(args, "--sub-langs")
-			if n < 0 || args[n+1] != "en,zh-Hant" {
-				t.Fatal("未按缺失语言补全", args)
+			if !slices.Contains(args, "--load-info-json") || slices.Contains(args, "--write-subs") || slices.Contains(args, "--write-auto-subs") {
+				t.Fatal("主视频未独立执行", args)
 			}
+		}
+		if i == 2 && (!slices.Contains(args, "--write-comments") || !slices.Contains(args, "--force-overwrites")) {
+			t.Fatal("评论未作为主视频之后的附属任务", args)
 		}
 	}
 	after, _ := os.Stat(audio)

@@ -50,3 +50,11 @@ export interface TaskGroup {
  counts: Record<string, number>; total: number; error: string
  updated_at: string; test_item_limit: number
 }
+
+/** 进度来自下载器实际传输和产物大小，未知大小保持为零。 */
+export interface DetailPart {
+ kind: string; status: string; bytes_total: number; bytes_done: number; percent: number
+ error?: string; task_id: number; labels: string[]; number?: number
+}
+export interface DetailContent { key: string; title: string; status: string; parts: DetailPart[]; error?: string }
+export interface TaskDetails { platform: string; items: DetailContent[] }
