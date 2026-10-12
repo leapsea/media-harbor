@@ -6,6 +6,8 @@ import tarfile
 import tempfile
 import json
 import os
+import subprocess
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -62,3 +64,30 @@ class ReleaseTests(unittest.TestCase):
     def test_pypi_ignores_prerelease_and_yanked(self):
         with patch.object(release.urllib.request, 'urlopen'), patch.object(release.json, 'load', return_value={'releases': {'1.0': [{}], '1.1': [{}], '2.0rc1': [{}], '2.0': [{'yanked': True}]}}):
             self.assertEqual(release.pypi_version('gallery-dl'), '1.1')
+
+    def test_save_pushes_updated_manifest_and_tag_on_same_commit(self):
+        # 使用本地裸仓库验证真实提交与原子推送，不连接 GitHub。
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'checkout'
+            remote = Path(directory) / 'remote.git'
+            root.mkdir()
+            def git(*args, cwd=root):
+                return subprocess.check_output(['git', *args], cwd=cwd, stderr=subprocess.PIPE, text=True).strip()
+            git('init', '--bare', str(remote))
+            git('init', '-b', 'main')
+            git('config', 'user.name', 'test')
+            git('config', 'user.email', 'test@example.com')
+            manifest = root / 'internal/config/release.json'
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(json.dumps(dict(version='1.0.99', alpine='3.23')))
+            git('add', '.')
+            git('commit', '-m', 'initial')
+            git('remote', 'add', 'origin', str(remote))
+            values = dict(VERSION='1.0.100', GALLERY_DL='1.2', YT_DLP='2026.1.1', FFMPEG='8.0-r2')
+            with patch.object(release, 'ROOT', root), patch.object(release, 'MANIFEST', manifest), patch.dict(os.environ, values):
+                release.save(SimpleNamespace(branch='main'))
+            commit = git('rev-parse', 'HEAD')
+            self.assertEqual(git('rev-parse', 'refs/heads/main', cwd=remote), commit)
+            self.assertEqual(git('rev-parse', 'refs/tags/v1.0.100', cwd=remote), commit)
+            saved = json.loads(git('show', 'main:internal/config/release.json', cwd=remote))
+            self.assertEqual(saved, dict(version='1.0.100', alpine='3.23', gallery_dl='1.2', yt_dlp='2026.1.1', ffmpeg='8.0-r2'))

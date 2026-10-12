@@ -1,4 +1,4 @@
-"""读取固定构建版本，检查上游并生成补丁版本候选；不发布或修改远程仓库。"""
+"""检查固定依赖版本，保存自动版本提交，并为同一次构建提供发布清单。"""
 import argparse
 import copy
 import io
@@ -111,6 +111,22 @@ def apply(args):
     MANIFEST.write_text(json.dumps(current, indent=2) + "\n")
 
 
+def save(args):
+    """原子推送清单提交和版本标签，构建继续使用这个提交，不另触发发布。"""
+    apply(args)
+    version = os.environ["VERSION"]
+    commands = [
+        ["config", "user.name", "github-actions[bot]"],
+        ["config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"],
+        ["add", "internal/config/release.json"],
+        ["commit", "-m", f"Release v{version}: update download engines"],
+        ["tag", f"v{version}"],
+        ["push", "--atomic", "origin", f"HEAD:{args.branch}", f"refs/tags/v{version}"],
+    ]
+    for command in commands:
+        subprocess.run(["git", *command], cwd=ROOT, check=True)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -120,5 +136,8 @@ if __name__ == "__main__":
     check.add_argument("--output")
     check.set_defaults(run=resolve)
     commands.add_parser("apply").set_defaults(run=apply)
+    publish = commands.add_parser("save")
+    publish.add_argument("--branch", required=True)
+    publish.set_defaults(run=save)
     args = parser.parse_args()
     args.run(args)

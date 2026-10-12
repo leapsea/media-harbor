@@ -7,7 +7,7 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    - cron: '17 */6 * * *'
+    - cron: '17 */12 * * *'
   workflow_dispatch:
     inputs:
       check_updates:
@@ -38,8 +38,11 @@ concurrency:
 jobs:
   resolve:
     runs-on: ubuntu-latest
+    # 自动清单提交使用 GITHUB_TOKEN，不会额外触发 main/tag 的 push 工作流。
+    permissions:
+      contents: write
     outputs:
-      source_sha: ${{ steps.release.outputs.source_sha }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
       build: ${{ steps.release.outputs.build }}
       automatic: ${{ steps.release.outputs.automatic }}
       version: ${{ steps.release.outputs.version }}
@@ -65,6 +68,18 @@ jobs:
           args=(resolve --output "$GITHUB_OUTPUT" --tag "$TAG")
           if [ "$CHECK" = true ]; then args+=(--check); fi
           python3 scripts/release.py "${args[@]}"
+      - name: Commit and tag dependency update
+        if: steps.release.outputs.automatic == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          GALLERY_DL: ${{ steps.release.outputs.gallery_dl }}
+          YT_DLP: ${{ steps.release.outputs.yt_dlp }}
+          FFMPEG: ${{ steps.release.outputs.ffmpeg }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 scripts/release.py save --branch "$BRANCH"
+      - name: Resolve build source
+        id: source
+        run: |
           echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   backend:
@@ -107,7 +122,7 @@ jobs:
     needs: [resolve, backend, frontend]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       packages: write
     env:
       APP_VERSION: ${{ needs.resolve.outputs.version }}
@@ -119,18 +134,6 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.resolve.outputs.source_sha }}
-      - name: Prepare automatic version commit
-        if: needs.resolve.outputs.automatic == 'true'
-        env:
-          VERSION: ${{ env.APP_VERSION }}
-          GALLERY_DL: ${{ env.GALLERY }}
-          YT_DLP: ${{ env.YTDLP }}
-        run: |
-          python3 scripts/release.py apply
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add internal/config/release.json
-          git commit -m "Release v$APP_VERSION: update download engines"
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - name: Resolve image identity
@@ -148,7 +151,7 @@ jobs:
             type=ref,event=tag,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
             type=raw,value=v${{ env.APP_VERSION }},enable=${{ needs.resolve.outputs.automatic == 'true' }}
             type=raw,value=sha-${{ env.SOURCE_SHA }}
-            type=raw,value=latest,enable=${{ needs.resolve.outputs.automatic == 'true' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')) }}
+            type=raw,value=latest,enable=${{ needs.resolve.outputs.automatic == 'true' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')))) }}
       # 单架构加载到本地 Docker，使用真实引擎验证文件流程后才允许发布。
       - name: Build amd64 test image
         uses: docker/build-push-action@v6
@@ -199,14 +202,14 @@ jobs:
           FFMPEG_VERSION: ${{ env.FFMPEG }}
         run: python3 scripts/container-smoke.py
       - name: Log in to GHCR
-        if: needs.resolve.outputs.automatic == 'true' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        if: needs.resolve.outputs.automatic == 'true' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'workflow_dispatch'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish tested multi-architecture image
-        if: needs.resolve.outputs.automatic == 'true' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        if: needs.resolve.outputs.automatic == 'true' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'workflow_dispatch'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -222,11 +225,3 @@ jobs:
             GALLERY_DL_VERSION=${{ env.GALLERY }}
             YTDLP_VERSION=${{ env.YTDLP }}
             FFMPEG_VERSION=${{ env.FFMPEG }}
-      # 镜像验证与发布成功之后，才保存清单与版本标签。
-      - name: Save successful automatic release
-        if: needs.resolve.outputs.automatic == 'true'
-        env:
-          BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          git tag "v$APP_VERSION"
-          git push --atomic origin "HEAD:$BRANCH" "refs/tags/v$APP_VERSION"
