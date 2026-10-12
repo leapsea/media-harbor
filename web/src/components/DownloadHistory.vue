@@ -30,8 +30,9 @@ async function copyDirectory(item: Content) {
 <template>
  <section class="panel history-list" :aria-label="t('下载记录')">
   <!-- 清空只调用历史接口，任务队列和文件操作保持各自职责。 -->
-  <div class="history-actions"><button class="danger" :disabled="store.busy || !store.contents.length" @click="store.mutate(() => api('/contents/history', 'DELETE'), t('下载历史已清空'))">{{ t("清空历史记录") }}</button></div>
-  <p v-if="!store.contents.length" class="empty">{{ t("暂无下载记录") }}</p>
+  <div class="history-actions"><button class="danger" :disabled="store.busy || !store.contentsLoaded || !store.contents.length" @click="store.mutate(() => api('/contents/history', 'DELETE'), t('下载历史已清空'))">{{ t("清空历史记录") }}</button></div>
+  <p v-if="!store.contentsLoaded" class="empty">{{ t("正在加载下载记录…") }}</p>
+  <p v-else-if="!store.contents.length" class="empty">{{ t("暂无下载记录") }}</p>
   <article v-for="item in items" :key="item.id" class="history-card">
    <div class="section-top">
     <div><h3>{{ item.title || item.remote_id }}</h3><p class="help">{{ t('{author} · 发布于 {time}', { author: store.subscriptionName(item.subscription_id), time: formatDate(item.published) }) }}</p></div>

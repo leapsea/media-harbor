@@ -88,7 +88,11 @@ CREATE TABLE IF NOT EXISTS youtube_paid_blocks(channel_id TEXT PRIMARY KEY,faile
 // list 和 one 只在存储适配器内部共享序列化逻辑。
 // 查询始终关闭 Rows，释放单连接供后续事务使用。
 func list[T any](db *sql.DB, q string) ([]T, error) {
-	rows, e := db.Query(q)
+	return listArgs[T](db, q)
+}
+
+func listArgs[T any](db *sql.DB, q string, args ...any) ([]T, error) {
+	rows, e := db.Query(q, args...)
 	if e != nil {
 		return nil, e
 	}
@@ -143,6 +147,26 @@ func (s *Store) Content(id int64) (domain.Content, error) {
 // 调度器逆序遍历，使较早创建的任务先执行。
 func (s *Store) Tasks() ([]domain.Task, error) {
 	return list[domain.Task](s.db, "SELECT payload FROM tasks ORDER BY id DESC")
+}
+
+// TaskStatusCounts 直接聚合结构化状态列，仪表盘无需反序列化全部任务。
+func (s *Store) TaskStatusCounts() (map[string]int, error) {
+	rows, err := s.db.Query("SELECT status, COUNT(*) FROM tasks GROUP BY status")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := map[string]int{}
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		counts[status] = count
+	}
+	return counts, rows.Err()
 }
 
 // 运行完成前重新读取状态，尊重用户取消意图。

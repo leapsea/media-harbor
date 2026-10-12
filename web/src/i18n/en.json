@@ -255,5 +255,6 @@
   "已跳过": "Skipped",
   "已跳过 {count}": "Skipped {count}",
   "只能重试失败、取消或跳过的任务": "Only failed, cancelled or skipped tasks can be retried",
-  "页面刷新失败": "Page refresh failed"
+  "页面刷新失败": "Page refresh failed",
+  "正在加载下载记录…": "Loading download history…"
 }

@@ -176,6 +176,7 @@ type DryRunner interface {
 // DownloadHistoryRepository 隔离历史展示生命周期，不删除下载索引或文件。
 type DownloadHistoryRepository interface {
 	DownloadHistory() ([]Content, error)
+	RecentDownloadHistory(int) ([]Content, error)
 	ClearDownloadHistory() (int, error)
 	ShowDownloadHistory(int64) error
 }
@@ -194,6 +195,7 @@ type Repository interface {
 	Content(int64) (Content, error)
 	SaveContent(*Content) error
 	Tasks() ([]Task, error)
+	TaskStatusCounts() (map[string]int, error)
 	Task(int64) (Task, error)
 	SaveTask(*Task) error
 	Enqueue(int64, int64, string) (Task, error)

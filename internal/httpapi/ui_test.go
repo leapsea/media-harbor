@@ -41,13 +41,20 @@ func TestRecentDownloadLimit(t *testing.T) {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest("GET", "/api/dashboard", nil))
 		var result struct {
-			Recent []domain.Content `json:"recent"`
+			Recent            []domain.Content  `json:"recent"`
+			Language          string            `json:"language"`
+			SubscriptionNames map[string]string `json:"subscription_names"`
+			Counts            map[string]int    `json:"counts"`
 		}
 		if err = json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 			t.Fatal(err)
 		}
-		if response.Code != 200 || len(result.Recent) != min(count, 12) {
+		_, hasSubscriptionName := result.SubscriptionNames[fmt.Sprint(s.ID)]
+		if response.Code != 200 || len(result.Recent) != min(count, 12) || result.Language != settings.UI.Language || !hasSubscriptionName || result.Counts["queued"] != 12 {
 			t.Fatal(count, response.Body.String())
+		}
+		if result.Recent[0].RemoteID != "11" {
+			t.Fatal("总览应按最新记录优先返回", result.Recent)
 		}
 	}
 	items, _ := db.Contents()

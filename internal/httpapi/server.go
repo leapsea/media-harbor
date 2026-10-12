@@ -29,6 +29,7 @@ func Handler(app *service.App) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/subscriptions/dryrun", api.dryRun)
 	mux.HandleFunc("GET /api/dashboard", api.dashboard)
+	mux.HandleFunc("GET /api/directories", func(w http.ResponseWriter, r *http.Request) { reply(w, app.Directories(), nil) })
 	mux.HandleFunc("GET /api/subscriptions", func(w http.ResponseWriter, r *http.Request) { v, e := app.SubscriptionViews(); reply(w, v, e) })
 	// 头像由同源接口读取本地文件，避免前端依赖带签名的 Instagram CDN 地址。
 	mux.HandleFunc("GET /api/subscriptions/{id}/avatar", func(w http.ResponseWriter, r *http.Request) {
@@ -164,31 +165,36 @@ func (api *API) saveSubscription(w http.ResponseWriter, r *http.Request) {
 // dashboard 聚合轻量数据；引擎版本单独请求以避免每次刷新运行子进程。
 // 最近内容数量由界面设置决定，完整历史由 contents 接口提供。
 func (api *API) dashboard(w http.ResponseWriter, r *http.Request) {
+	settings, e := api.app.Repo.Settings()
+	if e != nil {
+		reply(w, nil, e)
+		return
+	}
 	subs, e := api.app.Repo.Subscriptions()
 	if e != nil {
 		reply(w, nil, e)
 		return
 	}
-	tasks, e := api.app.Repo.Tasks()
+	counts, e := api.app.Repo.TaskStatusCounts()
 	if e != nil {
 		reply(w, nil, e)
 		return
 	}
-	items, e := api.app.Repo.DownloadHistory()
-	counts := map[string]int{"queued": 0, "running": 0, "completed": 0, "failed": 0}
-	for _, t := range tasks {
-		counts[t.Status]++
-	}
-	// 总览数量来自统一界面设置，不影响下载历史或任务队列。
-	settings, err := api.app.Repo.Settings()
-	if err != nil {
-		reply(w, nil, err)
+	items, e := api.app.Repo.RecentDownloadHistory(settings.UI.RecentDownloads)
+	if e != nil {
+		reply(w, nil, e)
 		return
 	}
-	if len(items) > settings.UI.RecentDownloads {
-		items = items[:settings.UI.RecentDownloads]
+	for _, status := range []string{"queued", "running", "completed", "failed"} {
+		if _, exists := counts[status]; !exists {
+			counts[status] = 0
+		}
 	}
-	reply(w, map[string]any{"version": config.ReleaseVersion(), "subscriptions": len(subs), "counts": counts, "recent": items, "directories": api.app.Directories()}, e)
+	names := make(map[int64]string, len(subs))
+	for _, sub := range subs {
+		names[sub.ID] = sub.DisplayName
+	}
+	reply(w, map[string]any{"version": config.ReleaseVersion(), "language": settings.UI.Language, "subscriptions": len(subs), "subscription_names": names, "counts": counts, "recent": items, "directories": api.app.Directories()}, nil)
 }
 
 // engines 仅提供独立运行依赖的当前版本；V1 更新通过重建镜像完成。

@@ -40,7 +40,8 @@ export interface Settings {
  template: string; auto_archive: boolean; use_upload_date: boolean; youtube: YouTubeOptions; ui: UISettings; debug: { test_item_limit: number }
 }
 export interface Dashboard {
- version: string; subscriptions: number; counts: Record<string, number>
+ version: string; language: string; subscriptions: number; subscription_names: Record<number, string>
+ counts: Record<string, number>
  recent: Content[]; directories: Directory[]
 }
 
