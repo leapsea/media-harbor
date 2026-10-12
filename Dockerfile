@@ -5,21 +5,24 @@ ARG GO_BUILD_IMAGE=golang:1.26.5-alpine3.23
 FROM --platform=$BUILDPLATFORM ${WEB_BUILD_IMAGE} AS web
 WORKDIR /src/web
 COPY web/package*.json ./
-RUN npm ci --no-audit --no-fund
+# 锁文件变化时复用包下载缓存，安装结果仍由 npm ci 决定。
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
 # 使用纯 Go SQLite，支持 amd64 与 arm64 交叉编译。
 FROM --platform=$BUILDPLATFORM ${GO_BUILD_IMAGE} AS backend
-ARG TARGETOS
-ARG TARGETARCH
-ARG APP_VERSION
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-X media-harbor/internal/config.BuildVersion=${APP_VERSION}" -o /server ./cmd/server
+# 依赖层不引入架构和版本参数，双架构共享下载结果后才分支编译。
+ARG TARGETOS
+ARG TARGETARCH
+ARG APP_VERSION
+# 本地连续构建保留包编译缓存；CI 跨运行继续使用 GHA 层缓存。
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-X media-harbor/internal/config.BuildVersion=${APP_VERSION}" -o /server ./cmd/server
 
 # 引擎与 FFmpeg 独立固定版本；启动时不自动升级。
 FROM alpine:3.23
