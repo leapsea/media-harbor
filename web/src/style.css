@@ -127,11 +127,11 @@ textarea{resize:vertical;margin-bottom:8px;line-height:1.5}
 .check{flex-direction:row;align-items:center;gap:6px;font-size:13px;line-height:1.5;cursor:pointer;min-height:24px}
 .check input{width:15px;height:15px;min-height:0;padding:0;accent-color:#698578;flex-shrink:0}
 .form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px;border-top:1px solid var(--line);padding-top:12px}
-/* Cookie 状态使用无底色文本与圆点，不采用按钮形状。 */
-.cookie-status{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:6px}
-.cookie-status::before{content:"";width:5px;height:5px;border-radius:50%;background:#a5b0b0}
-.cookie-status.configured{color:#5b796a}
-.cookie-status.configured::before{background:#6b927a}
+/* Cookie 状态以实心勾与空心横线区分，颜色之外也能辨认，不使用按钮样式。 */
+.cookie-status{font-size:13px;line-height:18px;min-height:20px;font-weight:600;color:#916437;display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.cookie-status-icon{display:block;width:16px;height:16px;flex-shrink:0}
+.cookie-status-label{display:block;min-width:0;line-height:18px}
+.cookie-status.configured{color:#286c43}
 
 /* 弹窗缩窄并减少内部留白，长表单的操作栏保持可见。 */
 .modal-backdrop{position:fixed;inset:0;background:#14292f66;display:flex;align-items:center;justify-content:center;padding:16px;z-index:20}
@@ -277,7 +277,11 @@ textarea{resize:vertical;margin-bottom:8px;line-height:1.5}
 .settings-row + .settings-row { border-top: 1px solid var(--line); }
 .settings-row > strong, .settings-row > span { min-width: 0; overflow-wrap: anywhere; }
 .settings-version-row { grid-template-columns: 120px minmax(0, 1fr); }
-.settings-cookie-row { grid-template-columns: minmax(72px, 1fr) minmax(0, 1fr) auto; }
+/* Cookie 复用通用表单网格，不伸展状态与按钮之间的空白，也不另设卡片尺寸。 */
+.settings-cookie-name { text-align: right; }
+.settings-cookie-controls { display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }
+.settings-cookie-controls > .cookie-status { max-width: 100%; white-space: normal; }
+.settings-cookie-controls > .settings-row-actions { justify-content: flex-start; }
 .settings-row-actions, .settings-inline-actions, .settings-engine-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .settings-engine-actions { margin-bottom: 8px; }
 .settings-detail-content { display: grid; gap: 12px; margin-top: 8px; }
@@ -285,7 +289,6 @@ textarea{resize:vertical;margin-bottom:8px;line-height:1.5}
 .settings-cookie-form { margin-top: 12px; }
 @media (max-width: 700px) {
  .settings-version-row { grid-template-columns: 80px minmax(0, 1fr); }
- .settings-cookie-row { gap: 8px; }
  .settings-row-actions { max-width: 180px; }
  .settings-row-actions button { white-space: normal; overflow-wrap: anywhere; }
 }

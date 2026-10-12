@@ -7,6 +7,7 @@ import YouTubeOptions from './YouTubeOptions.vue'
 import UISettingsOptions from './UISettingsOptions.vue'
 import StorageManagement from './StorageManagement.vue'
 import ToggleSwitch from 'primevue/toggleswitch'
+import { useHashNavigation } from '../composables/useHashNavigation'
 /**
  * 系统设置以本地表单副本编辑，后台轮询不会覆盖尚未保存的输入。
  */
@@ -41,13 +42,13 @@ async function saveSettings() {
  }))
 }
 /** 分类切换只控制展示，本地表单副本持续保留编辑内容。 */
-const category = ref('display')
+const { category } = useHashNavigation()
 const categories = [
  { id: 'display', label: '界面' }, { id: 'files', label: '文件与归档' },
  { id: 'youtube', label: '下载选项' }, { id: 'scheduling', label: '并发调度' },
  { id: 'cookies', label: 'Cookie' }, { id: 'engines', label: '引擎' },
  { id: 'storage', label: '存储' }, { id: 'debug', label: '调试' },
-]
+] as const
 const galleryConfig = ref('{}')
 const cookies = ref<Record<string, boolean>>({ youtube: false, instagram: false })
 const cookiePlatform = ref<string | null>(null)
@@ -128,11 +129,22 @@ async function removeCookie(platform: string) {
  <div class="settings-save"><button class="primary" :disabled="store.busy">{{ store.busy ? t("正在保存…") : t("保存设置") }}</button></div>
  </form>
  <section v-show="category === 'cookies'" class="panel settings-panel" :aria-label="t('Cookie 配置')">
-  <div v-for="p in ['youtube', 'instagram']" :key="p" class="settings-row settings-cookie-row">
-   <strong>{{ p === 'youtube' ? 'YouTube' : 'Instagram' }}</strong>
-   <span class="cookie-status" :class="{ configured: cookies[p] }">{{ cookies[p] ? t("已配置") : t("未配置") }}</span>
+  <!-- 与通用设置复用两列表单和标签列，状态与操作作为一个控件组紧邻排列。 -->
+  <div class="form-grid">
+  <div v-for="p in ['youtube', 'instagram']" :key="p" class="form-row settings-cookie-row">
+   <span class="settings-cookie-name">{{ p === 'youtube' ? 'YouTube' : 'Instagram' }}</span>
+   <div class="settings-cookie-controls">
+   <!-- 状态图标使用相同 SVG 坐标，文字使用独立行框，避免字符图标影响上下对齐。 -->
+   <span class="cookie-status" :class="{ configured: cookies[p] }">
+    <svg class="cookie-status-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.5" :fill="cookies[p] ? 'currentColor' : 'none'" stroke="currentColor" />
+     <path v-if="cookies[p]" d="M4.5 8 7 10.5 11.5 5.5" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+     <path v-else d="M5 8h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+    </svg><span class="cookie-status-label">{{ cookies[p] ? t("已配置") : t("未配置") }}</span>
+   </span>
    <div class="settings-row-actions"><button :disabled="store.busy" @click="editCookie(p)">{{ t("编辑") }}</button>
    <button :disabled="store.busy || !cookies[p]" @click="removeCookie(p)">{{ t("删除") }}</button></div>
+   </div>
+  </div>
   </div>
  </section>
  <section v-show="category === 'engines'" class="panel settings-panel" :aria-label="t('运行引擎')">

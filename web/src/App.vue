@@ -5,6 +5,7 @@ import { api, useMediaStore } from './stores/media'
 import type { Subscription } from './types'
 import Toast from 'primevue/toast'
 import { formatDate } from './utils/formatDate'
+import { useHashNavigation } from './composables/useHashNavigation'
 
 /**
  * 页面按需装载复杂表单，首屏保持轻量。
@@ -14,7 +15,7 @@ const SystemSettings = defineAsyncComponent(() => import('./components/SystemSet
 const DownloadHistory = defineAsyncComponent(() => import('./components/DownloadHistory.vue'))
 const TaskManagement = defineAsyncComponent(() => import('./components/TaskManagement.vue'))
 const store = useMediaStore()
-const page = ref('overview')
+const { page } = useHashNavigation()
 const editing = ref(false)
 const selected = ref<Subscription | null>(null)
 const log = ref<string | null>(null)
@@ -23,7 +24,7 @@ const logArea = ref<HTMLTextAreaElement | null>(null)
 const loaded = ref(false)
 let polling: ReturnType<typeof setInterval> | undefined
 let refreshError = ''
-const pages = [{ id: 'overview', label: '总览', icon: '◈' }, { id: 'tasks', label: '任务管理', icon: '≡' }, { id: 'history', label: '下载历史', icon: '◷' }, { id: 'settings', label: '系统设置', icon: '⚙' }]
+const pages = [{ id: 'overview', label: '总览', icon: '◈' }, { id: 'tasks', label: '任务管理', icon: '≡' }, { id: 'history', label: '下载历史', icon: '◷' }, { id: 'settings', label: '系统设置', icon: '⚙' }] as const
 const title = computed(() => pages.find(p => p.id === page.value)?.label)
 const labels: Record<string, string> = { queued: '待执行', running: '运行中', completed: '已完成', failed: '失败', cancelled: '已取消', catchup: '补全下载', scan: '增量扫描', full: '全量初始化', download: '下载', mounted: '已挂载', unmounted: '未挂载', unknown: '未知' }
 
@@ -77,9 +78,10 @@ onUnmounted(() => { if (polling) clearInterval(polling) })
   <!-- 全局通知位于弹窗之上，不占用页面纵向空间。 -->
   <Toast position="top-right" :base-z-index="2000" :breakpoints="{ '700px': { width: 'calc(100% - 24px)', right: '12px', left: '12px' } }" :close-button-props="{ 'aria-label': t('关闭通知') }" />
   <aside class="sidebar">
-   <a class="brand" href="#" @click.prevent="page = 'overview'"><span class="brand-icon">m<span>↓</span></span><span>Media<br><b>Harbor</b></span></a>
+   <a class="brand" href="#/overview" @click.prevent="page = 'overview'"><span class="brand-icon">m<span>↓</span></span><span>Media<br><b>Harbor</b></span></a>
    <nav><button v-for="item in pages" :key="item.id" :class="{ selected: page === item.id }" @click="page = item.id"><span>{{ item.icon }}</span>{{ t(item.label) }}<i v-if="item.id === 'tasks' && store.dashboard?.counts.running" class="nav-dot"></i></button></nav>
-   <div class="sidebar-footer"><span class="online-dot"></span>{{ t("单实例 · V1") }}</div>
+   <!-- 使用后端发布版本，随发布清单或镜像构建版本更新，前端不维护版本常量。 -->
+   <div class="sidebar-footer"><span class="online-dot"></span><span v-if="store.dashboard?.version">V{{ store.dashboard.version }}</span></div>
   </aside>
   <main>
    <header class="page-header"><h1>{{ t(title) }}</h1><button class="primary" :disabled="!store.settings || store.busy" @click="edit(null)"><span>＋</span> {{ t("新增任务") }}</button></header>

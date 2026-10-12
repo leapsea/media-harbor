@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "alpine": "3.23",
   "gallery_dl": "1.32.16",
   "yt_dlp": "2026.8.19",
