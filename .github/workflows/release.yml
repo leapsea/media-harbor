@@ -1,0 +1,230 @@
+name: Build and publish Media Harbor
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      check_updates:
+        description: Check upstream dependencies and publish a new patch when updated
+        type: boolean
+        default: false
+      gallery_dl:
+        description: gallery-dl version
+        type: string
+        default: ''
+      yt_dlp:
+        description: yt-dlp version
+        type: string
+        default: ''
+      ffmpeg:
+        description: Alpine FFmpeg package version
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+# 发布串行执行，避免同一版本线同时分配补丁号。
+concurrency:
+  group: media-harbor-release
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.release.outputs.source_sha }}
+      build: ${{ steps.release.outputs.build }}
+      automatic: ${{ steps.release.outputs.automatic }}
+      version: ${{ steps.release.outputs.version }}
+      gallery_dl: ${{ steps.release.outputs.gallery_dl }}
+      yt_dlp: ${{ steps.release.outputs.yt_dlp }}
+      ffmpeg: ${{ steps.release.outputs.ffmpeg }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ (github.event_name == 'schedule' || inputs.check_updates) && github.event.repository.default_branch || github.ref }}
+      - name: Verify version rules
+        run: python3 -m unittest discover -s scripts/tests
+      - name: Resolve release candidate
+        id: release
+        env:
+          CHECK: ${{ github.event_name == 'schedule' || inputs.check_updates }}
+          TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          GALLERY_DL: ${{ inputs.gallery_dl }}
+          YT_DLP: ${{ inputs.yt_dlp }}
+          FFMPEG: ${{ inputs.ffmpeg }}
+        run: |
+          args=(resolve --output "$GITHUB_OUTPUT" --tag "$TAG")
+          if [ "$CHECK" = true ]; then args+=(--check); fi
+          python3 scripts/release.py "${args[@]}"
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  backend:
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Backend tests and analysis
+        run: |
+          go test -race ./...
+          go vet ./...
+
+  frontend:
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Frontend tests and build
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+          npm run build
+
+  image:
+    needs: [resolve, backend, frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      APP_VERSION: ${{ needs.resolve.outputs.version }}
+      GALLERY: ${{ needs.resolve.outputs.gallery_dl }}
+      YTDLP: ${{ needs.resolve.outputs.yt_dlp }}
+      FFMPEG: ${{ needs.resolve.outputs.ffmpeg }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.resolve.outputs.source_sha }}
+      - name: Prepare automatic version commit
+        if: needs.resolve.outputs.automatic == 'true'
+        env:
+          VERSION: ${{ env.APP_VERSION }}
+          GALLERY_DL: ${{ env.GALLERY }}
+          YT_DLP: ${{ env.YTDLP }}
+        run: |
+          python3 scripts/release.py apply
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add internal/config/release.json
+          git commit -m "Release v$APP_VERSION: update download engines"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Resolve image identity
+        run: |
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          labels: |
+            org.opencontainers.image.revision=${{ env.SOURCE_SHA }}
+            org.opencontainers.image.version=${{ env.APP_VERSION }}
+          tags: |
+            type=ref,event=tag,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+            type=raw,value=v${{ env.APP_VERSION }},enable=${{ needs.resolve.outputs.automatic == 'true' }}
+            type=raw,value=sha-${{ env.SOURCE_SHA }}
+            type=raw,value=latest,enable=${{ needs.resolve.outputs.automatic == 'true' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')) }}
+      # 单架构加载到本地 Docker，使用真实引擎验证文件流程后才允许发布。
+      - name: Build amd64 test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: media-harbor-smoke:amd64
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,scope=amd64,mode=max
+          build-args: |
+            APP_VERSION=${{ env.APP_VERSION }}
+            GALLERY_DL_VERSION=${{ env.GALLERY }}
+            YTDLP_VERSION=${{ env.YTDLP }}
+            FFMPEG_VERSION=${{ env.FFMPEG }}
+      - name: Verify amd64 container
+        env:
+          SMOKE_IMAGE: media-harbor-smoke:amd64
+          SMOKE_PLATFORM: linux/amd64
+          GALLERY_DL_VERSION: ${{ env.GALLERY }}
+          YTDLP_VERSION: ${{ env.YTDLP }}
+          FFMPEG_VERSION: ${{ env.FFMPEG }}
+        run: python3 scripts/container-smoke.py
+      - name: Build arm64 test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          load: true
+          tags: media-harbor-smoke:arm64
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,scope=arm64,mode=max
+          build-args: |
+            APP_VERSION=${{ env.APP_VERSION }}
+            GALLERY_DL_VERSION=${{ env.GALLERY }}
+            YTDLP_VERSION=${{ env.YTDLP }}
+            FFMPEG_VERSION=${{ env.FFMPEG }}
+      - name: Verify arm64 container
+        env:
+          SMOKE_IMAGE: media-harbor-smoke:arm64
+          SMOKE_PLATFORM: linux/arm64
+          GALLERY_DL_VERSION: ${{ env.GALLERY }}
+          YTDLP_VERSION: ${{ env.YTDLP }}
+          FFMPEG_VERSION: ${{ env.FFMPEG }}
+        run: python3 scripts/container-smoke.py
+      - name: Log in to GHCR
+        if: needs.resolve.outputs.automatic == 'true' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish tested multi-architecture image
+        if: needs.resolve.outputs.automatic == 'true' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: |
+            type=gha,scope=amd64
+            type=gha,scope=arm64
+          build-args: |
+            APP_VERSION=${{ env.APP_VERSION }}
+            GALLERY_DL_VERSION=${{ env.GALLERY }}
+            YTDLP_VERSION=${{ env.YTDLP }}
+            FFMPEG_VERSION=${{ env.FFMPEG }}
+      # 镜像验证与发布成功之后，才保存清单与版本标签。
+      - name: Save successful automatic release
+        if: needs.resolve.outputs.automatic == 'true'
+        env:
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git tag "v$APP_VERSION"
+          git push --atomic origin "HEAD:$BRANCH" "refs/tags/v$APP_VERSION"

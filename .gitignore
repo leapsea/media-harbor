@@ -1,0 +1,14 @@
+.env
+.cache/
+.venv/
+data/
+logs/
+downloads/
+archive/
+web/node_modules/
+web/dist/
+bin/
+.test-runtime/
+*.log
+AGENTS.md
+__pycache__/

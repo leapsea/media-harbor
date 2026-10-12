@@ -1,0 +1,24 @@
+services:
+  media-harbor:
+    image: ${IMAGE:-media-harbor:1.0.0}
+    build:
+      context: .
+      args:
+        GALLERY_DL_VERSION: ${GALLERY_DL_VERSION:-}
+        YTDLP_VERSION: ${YTDLP_VERSION:-}
+        FFMPEG_VERSION: ${FFMPEG_VERSION:-}
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - ${DATA_PATH:-./data}:/data
+      - ${DOWNLOAD_PATH:-./downloads}:/downloads
+      - ${ARCHIVE_PATH:-./archive}:/archive
+      - ${LOG_PATH:-./logs}:/logs
+    environment:
+      LOG_DIR: /logs
+      YTDLP_MAX_CONCURRENT: ${YTDLP_MAX_CONCURRENT:-5}
+      GALLERY_DL_MAX_CONCURRENT: ${GALLERY_DL_MAX_CONCURRENT:-20}
+      INSTAGRAM_USER_AGENT: ${INSTAGRAM_USER_AGENT:-}
+      TZ: ${TZ:-Asia/Singapore}

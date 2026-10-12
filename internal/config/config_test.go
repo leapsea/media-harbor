@@ -1,0 +1,36 @@
+package config
+
+import "testing"
+
+// TestInitialSettings 固定首次启动默认值，避免数据库重建后仍带有旧配置。
+func TestInitialSettings(t *testing.T) {
+	for _, key := range []string{"YTDLP_MAX_CONCURRENT", "GALLERY_DL_MAX_CONCURRENT"} {
+		t.Setenv(key, "")
+	}
+	settings := Defaults()
+	if !settings.UseUploadDate || settings.YouTubeConcurrent != 2 || settings.InstagramConcurrent != 10 || settings.Template != "{platform}/{directory_name}/{year}/{month}{day}/{filename}" {
+		t.Fatalf("settings=%+v", settings)
+	}
+	if settings.YouTube.AudioFormat != "m4a" || settings.YouTube.AudioQuality != "0" || settings.YouTube.Fragments != 6 {
+		t.Fatalf("youtube=%+v", settings.YouTube)
+	}
+}
+
+// TestSavedDefaults 初始化恢复用户当前已确认的字幕、音频、缩略图和元数据选项。
+func TestSavedDefaults(t *testing.T) {
+	o := Defaults().YouTube
+	if !o.Subtitles || !o.AutoSubtitles || !o.ExtraAudio || !o.Thumbnail || !o.Metadata || !o.Comments || o.ExtractAudio {
+		t.Fatal(o)
+	}
+	if o.Format != "bestvideo+bestaudio/best" || o.SubtitleLanguages != "zh.*,en" {
+		t.Fatal(o)
+	}
+}
+
+// TestUISettingsDefaults 界面数量独立于引擎下载上限，初始化统一由配置快照提供。
+func TestUISettingsDefaults(t *testing.T) {
+	ui := Defaults().UI
+	if ui.Language != "zh-CN" || ui.RecentDownloads != 3 || ui.HistoryPageSize != 20 || ui.TaskPageSize != 20 {
+		t.Fatal(ui)
+	}
+}

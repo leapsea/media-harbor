@@ -1,0 +1,31 @@
+{
+  "youtube_concurrent": 2,
+  "instagram_concurrent": 10,
+  "template": "{platform}/{directory_name}/{year}/{month}{day}/{filename}",
+  "auto_archive": false,
+  "youtube": {
+    "video": true,
+    "format": "bestvideo+bestaudio/best",
+    "subtitles": true,
+    "auto_subtitles": true,
+    "subtitle_languages": "zh.*,en",
+    "comments": true,
+    "extra_audio": true,
+    "extract_audio": false,
+    "audio_format": "m4a",
+    "audio_quality": "0",
+    "thumbnail": true,
+    "metadata": true,
+    "fragments": 6
+  },
+  "use_upload_date": true,
+  "ui": {
+    "recent_downloads": 3,
+    "history_page_size": 20,
+    "task_page_size": 20,
+    "language": "zh-CN"
+  },
+  "debug": {
+    "test_item_limit": 0
+  }
+}

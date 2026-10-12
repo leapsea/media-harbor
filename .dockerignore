@@ -1,0 +1,13 @@
+.git
+.env
+.cache
+.venv
+.test-runtime
+data
+logs
+downloads
+archive
+bin
+web/node_modules
+web/dist
+__pycache__/

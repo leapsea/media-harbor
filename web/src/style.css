@@ -1,0 +1,323 @@
+/* 全局密度：按组件尺寸收紧布局，不使用页面缩放，保证文字和交互状态清晰。 */
+:root{
+ font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;
+ color:#293b42;background:#f5f6f3;font-synthesis:none;font-size:14px;
+ --ink:#203941;--muted:#72817f;--line:#e3e7e1;--accent:#c46245;
+ --sidebar-width:184px;--control-height:32px;--radius:6px;
+}
+*{box-sizing:border-box}
+body{margin:0}
+button,input,select,textarea{font:inherit}
+button,a{transition:background .15s,color .15s,transform .15s}
+button{min-height:30px;background:#fff;border:1px solid #d9e0d9;border-radius:var(--radius);padding:5px 10px;color:var(--ink);cursor:pointer;font-size:13px;line-height:18px;white-space:nowrap}
+button:hover{background:#edf1eb}
+button:active{transform:translateY(1px);background:#e4eae2}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:2px solid #dc997e;outline-offset:2px}
+button:disabled,input:disabled,select:disabled{opacity:.5;cursor:not-allowed}
+a{color:#486970;text-decoration:none}
+a:hover{text-decoration:underline}
+h1,h2,h3,p{margin:0}
+h1{font-size:22px;font-weight:600;letter-spacing:-.5px;line-height:30px}
+h2{font-size:18px;font-weight:600;letter-spacing:-.3px;line-height:26px}
+h3{font-size:15px;font-weight:600;line-height:22px;margin:12px 0 8px}
+small{font-size:12px;color:var(--muted)}
+strong{font-weight:600}
+code,.code{font-family:ui-monospace,SFMono-Regular,monospace}
+code{font-size:12px;word-break:break-all}
+.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.primary:hover{background:#b25439}
+.primary:active{background:#9f4931}
+.danger{color:#ad513f}
+
+/* 桌面导航采用窄栏，内容限制阅读宽度，减少大片空白组件。 */
+.app-shell{display:flex;min-height:100vh}
+.sidebar{position:fixed;inset:0 auto 0 0;width:var(--sidebar-width);background:#20343b;color:#d8e3e4;padding:20px 12px 16px;display:flex;flex-direction:column}
+.brand{display:flex;gap:10px;align-items:center;padding:0 6px;color:#edf3ef;font-size:15px;line-height:1.3}
+.brand:hover{text-decoration:none}
+.brand b{font-weight:600}
+.brand-icon{position:relative;width:32px;height:32px;flex-shrink:0;border:1px solid #586b6d;border-radius:8px;display:grid;place-items:center;font-size:22px;font-weight:600}
+.brand-icon span{color:#e9a07e;position:absolute;font-size:16px;right:2px;bottom:-3px}
+.sidebar nav{display:grid;gap:4px;margin-top:20px}
+.sidebar nav button{border:0;background:none;color:#afc2c4;display:flex;gap:10px;align-items:center;text-align:left;padding:8px 12px;font-size:14px;min-height:36px}
+.sidebar nav button span{font-size:18px;width:20px}
+.sidebar nav button:hover{background:#2c464b}
+.sidebar nav button.selected{background:#354f54;color:#fff}
+.nav-dot{width:5px;height:5px;background:#e8a078;border-radius:50%;margin-left:auto}
+.sidebar-footer{margin-top:auto;padding:14px 8px 0;font-size:12px;border-top:1px solid #3a5054}
+.online-dot{display:inline-block;width:6px;height:6px;background:#98b9a3;border-radius:50%;margin-right:6px}
+/* 内容区使用导航之外的可用宽度，横屏只保留统一的页边距。 */
+main{margin-left:var(--sidebar-width);width:calc(100% - var(--sidebar-width));min-width:0;padding:20px 24px 16px}
+.page-header,.section-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.page-header{margin-bottom:16px}
+.panel{background:#fff;border:1px solid var(--line);padding:16px;border-radius:8px;margin-bottom:12px}
+.help{font-size:12px;line-height:1.6;color:var(--muted);margin:6px 0 12px;overflow-wrap:anywhere}
+.section-top .help{margin-bottom:0}
+.empty{text-align:center;color:var(--muted);padding:16px 8px;line-height:1.6;font-size:13px}
+.error{color:#b6533d;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.badge{display:inline-block;padding:3px 7px;border-radius:4px;font-size:12px;font-weight:500;line-height:16px;white-space:nowrap;background:#edf0ed;color:#667875}
+.badge.completed{background:#e8f0e9;color:#44775a}
+.badge.running{background:#e7eff5;color:#437392}
+.badge.failed{background:#faebe4;color:#b05c43}
+.badge.queued{background:#f0efe8;color:#837854}
+.badge.cancelled{background:#eceef0;color:#7b858a}
+
+/* 统计标签和数值同行，目录和记录使用紧凑行布局。 */
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px}
+.stats article{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:60px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px}
+.stats span{font-size:12px;color:#63767a;line-height:1.5}
+.stats strong{font-size:24px;font-weight:500;white-space:nowrap}
+.stats i{font-size:16px;font-style:normal;color:#b7c3bd;margin:0 3px}
+.failure-number{color:var(--accent)}
+.overview-panel:last-child{margin-bottom:0}
+.overview-panel .section-top{min-height:30px}
+.overview-panel .empty{padding:8px 0 0;text-align:left;font-size:13px}
+.directory-actions{display:flex;gap:12px;align-items:center}
+.directory-actions .help{margin:0;white-space:nowrap}
+.directory-list{margin-top:8px}
+.directory-row{display:grid;grid-template-columns:minmax(0,1fr) 116px 140px;gap:12px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.directory-row:last-child{padding-bottom:0}
+.directory-location{min-width:0}
+.directory-location h3{font-size:14px;margin:0 0 2px}
+.directory-location code{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.directory-note{font-size:12px;line-height:1.5;color:var(--muted);margin-top:2px}
+.directory-state{display:flex;align-items:center;gap:8px}
+.mount-state{font-size:12px;color:var(--muted);white-space:nowrap}
+.directory-time{font-size:12px;color:var(--muted);text-align:right}
+.media-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid #edf0eb}
+.media-row:first-of-type{margin-top:12px}
+.media-icon{width:32px;height:32px;border-radius:6px;background:#f1f3ed;color:#637b6d;display:grid;place-items:center;font-size:20px}
+.grow{flex:1;min-width:0}
+.grow strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grow small{display:block;margin-top:4px}
+.actions{display:flex;gap:6px;flex-wrap:wrap}
+.actions button{font-size:12px;padding:4px 8px;min-height:28px}
+.table-wrap{overflow:auto;margin-top:12px}
+table{width:100%;border-collapse:collapse;font-size:13px;text-align:left}
+th{font-weight:500;color:var(--muted);font-size:12px;padding:8px;background:#f7f9f5}
+td{padding:12px 8px;border-bottom:1px solid #e8ece6;vertical-align:top}
+td small{display:block;margin-top:4px;max-width:280px}
+/* 下载记录以分隔线连续排列，收紧条目内外留白，保留完整标题和状态。 */
+.history-card{padding:8px 0;border-top:1px solid var(--line);margin-top:0}
+.history-card h3{margin:0 0 4px;overflow-wrap:anywhere}
+.history-card .help{margin:0;line-height:18px}
+.history-card>.section-top:last-child{margin-top:4px}
+
+/* 全局字段标题与控件同行，以真实控件高度统一表单密度。 */
+label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#5a6d72}
+input,select,textarea{width:100%;min-width:0;min-height:var(--control-height);padding:6px 8px;border:1px solid #d6dfd8;background:#fff;border-radius:var(--radius);color:var(--ink);font-size:14px;line-height:18px}
+/* 原生菜单交互保持不变，收起时统一箭头位置并为文字预留空间。 */
+select {
+ appearance: none;
+ -webkit-appearance: none;
+ padding-right: 30px;
+ background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m2 4 4 4 4-4' fill='none' stroke='%235a6d72' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+ background-repeat: no-repeat;
+ background-position: right 10px center;
+ background-size: 12px 12px;
+ cursor: pointer;
+}
+select:hover:not(:disabled) { border-color: #9aada0; }
+select:active:not(:disabled) { border-color: #819789; }
+textarea{resize:vertical;margin-bottom:8px;line-height:1.5}
+.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 28px;margin:12px 0}
+.wide{grid-column:1/-1}
+.form-grid>label,.form-row{display:grid;grid-template-columns:120px minmax(0,1fr);align-items:center;gap:8px;min-width:0;font-size:13px;color:#5a6d72;line-height:1.5}
+.subscription-fields{grid-template-columns:minmax(0,1fr)}
+.options-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 28px;margin:12px 0}
+.check{flex-direction:row;align-items:center;gap:6px;font-size:13px;line-height:1.5;cursor:pointer;min-height:24px}
+.check input{width:15px;height:15px;min-height:0;padding:0;accent-color:#698578;flex-shrink:0}
+.form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px;border-top:1px solid var(--line);padding-top:12px}
+/* Cookie 状态使用无底色文本与圆点，不采用按钮形状。 */
+.cookie-status{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:6px}
+.cookie-status::before{content:"";width:5px;height:5px;border-radius:50%;background:#a5b0b0}
+.cookie-status.configured{color:#5b796a}
+.cookie-status.configured::before{background:#6b927a}
+
+/* 弹窗缩窄并减少内部留白，长表单的操作栏保持可见。 */
+.modal-backdrop{position:fixed;inset:0;background:#14292f66;display:flex;align-items:center;justify-content:center;padding:16px;z-index:20}
+.modal{background:#fff;max-width:640px;width:100%;max-height:calc(100vh - 32px);overflow:auto;border-radius:10px;padding:20px;box-shadow:0 12px 48px #12232b24}
+.icon-button{font-size:20px;line-height:20px;border:0;background:none;padding:4px 6px;min-height:28px}
+.modal .form-actions{position:sticky;bottom:-20px;background:#fff;padding:10px 0;margin-top:12px;box-shadow:0 -6px 8px #fff}
+/* 日志正文独立滚动，标题和关闭按钮保持在固定区域。 */
+.log-modal{max-width:820px;display:flex;flex-direction:column;overflow:hidden}
+.log-modal>.section-top{flex:0 0 auto}
+.log-modal .log-content{flex:1 1 auto;min-height:0;overflow:auto;margin:12px 0 0;overscroll-behavior:contain;resize:none;height:55vh;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6;white-space:pre;tab-size:2}
+.youtube-symbol{color:#cf6344}
+.instagram-symbol{color:#9b6492;font-size:18px}
+.chosen .platform-check{visibility:visible}
+.platform-picker{border:0;margin:0;padding:0;min-width:0}
+.platform-choices{display:flex;gap:6px;max-width:280px}
+.platform-choices label{position:relative;flex:1;flex-direction:row;align-items:center;gap:6px;border:1px solid #d6dfd8;border-radius:6px;min-height:32px;padding:5px 8px;cursor:pointer;color:var(--ink)}
+.platform-choices label:hover{background:#f0f4ef}
+.platform-choices label:active{background:#e3e9e2}
+.platform-choices label.chosen{border-color:#819789;background:#edf3ed}
+.platform-choices label:focus-within{outline:2px solid #dc997e;outline-offset:2px}
+.platform-choices label:has(input:disabled){cursor:not-allowed;opacity:.65}
+.platform-choices input{position:absolute;width:1px;height:1px;min-height:0;opacity:0;padding:0;margin:0}
+.platform-symbol{font-size:14px;line-height:18px}
+.platform-check{margin-left:auto;visibility:hidden;color:#47775b}
+.schedule-picker,.schedule-body{min-width:0}
+.schedule-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.schedule-line>select{width:140px}
+.schedule-controls{display:flex;align-items:center;gap:6px;flex:1;min-width:176px;font-size:13px;color:#5a6d72}
+.schedule-controls select{flex:1;min-width:0;width:auto;padding:6px 30px 6px 6px}
+.schedule-controls span{white-space:nowrap}
+.schedule-note{display:block;margin-top:4px;font-size:12px;overflow-wrap:anywhere}
+.other-settings{border-top:1px solid var(--line);padding-top:8px;margin-top:8px}
+.other-settings summary{cursor:pointer;color:var(--ink);font-size:13px;padding:4px 0}
+.other-settings summary:hover{color:var(--accent)}
+.other-settings summary:active{color:#a34830}
+
+/* PrimeVue Toast 保持全局字号与紧凑宽度，关闭按钮不继承普通按钮边框。 */
+.p-toast{width:320px;max-width:calc(100vw - 24px)}
+.p-toast-close-button{padding:0;border:0;background:transparent;min-height:0}
+.p-toast-message-text{min-width:0;overflow-wrap:anywhere}
+
+/* 窄屏收窄标签列，保留控件可读字号和 32px 高度。 */
+@media(max-width:1100px){
+ main{padding:16px 20px}
+ .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .form-grid{grid-template-columns:minmax(0,1fr)}
+ .options-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:900px){
+ .directory-row{grid-template-columns:minmax(0,1fr) 116px}
+ .directory-time{grid-column:1/-1;text-align:left}
+ .directory-actions .help{display:none}
+}
+@media(max-width:700px){
+ .app-shell{display:block}
+ .sidebar{position:static;width:100%;padding:10px 12px}
+ .brand{font-size:14px;padding:0;gap:8px}
+ .brand br{display:none}
+ .brand b{margin-left:4px}
+ .brand-icon{width:28px;height:28px;font-size:20px}
+ .sidebar-footer{display:none}
+ .sidebar nav{display:flex;gap:4px;margin-top:8px;overflow:auto}
+ .sidebar nav button{padding:5px 9px;font-size:13px;min-height:30px;white-space:nowrap}
+ .sidebar nav button span{display:none}
+ main{width:100%;margin:0;padding:12px}
+ .page-header{margin-bottom:12px}
+ .stats article{min-height:52px;padding:8px 10px}
+ .stats strong{font-size:22px}
+ .panel{padding:12px}
+ .section-top>.help{display:none}
+ .directory-row{position:relative;grid-template-columns:minmax(0,1fr);gap:2px;padding:8px 0}
+ .directory-location h3{padding-right:112px}
+ .directory-state{position:absolute;right:0;top:8px;gap:6px}
+ .directory-time{grid-column:auto}
+ .form-grid>label,.form-row{grid-template-columns:120px minmax(0,1fr);gap:8px}
+ .modal-backdrop{padding:12px}
+ .modal{padding:16px;max-height:calc(100dvh - 24px)}
+ .modal .form-actions{bottom:-16px}
+ .platform-choices{gap:4px}
+ .platform-choices label{padding:5px 6px;gap:4px;font-size:13px}
+ .platform-check{display:none}
+ .schedule-line>select{width:100%}
+ .schedule-controls{min-width:0;flex-basis:100%}
+ .schedule-controls select{padding:6px 30px 6px 4px}
+ .subscription-modal .options-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 8px}
+}
+
+/* 分页工具保持同行，竖屏自动换行，避免横向溢出。 */
+.list-pagination { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.list-pagination > .help { margin-right: auto; }
+.list-pagination label { display: flex; flex-direction: row; align-items: center; gap: 4px; font-size: 13px; }
+.list-pagination select { width: auto; min-width: 64px; }
+.pagination-buttons { display: flex; align-items: center; gap: 4px; }
+
+/* 设置采用紧凑分类导航；只展示当前类别，保存入口跟随通用表单。 */
+.settings-categories { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+.settings-categories button { background: transparent; border-color: transparent; min-width:0; white-space:normal; overflow-wrap:anywhere; line-height:1.4; }
+.settings-categories button:hover { background: #edf3ed; }
+.settings-categories button.selected { background: #e6eee7; border-color: #bdccbf; color: #355447; }
+.settings-form { min-width: 0; }
+/* 调试字段保持紧凑同行；单位定位于输入框内，不占用独立标签列。 */
+.debug-settings { display: grid; gap: 12px; margin: 0; max-width: 460px; }
+.debug-settings .form-row > label { text-align: right; }
+.debug-settings .p-toggleswitch { --p-toggleswitch-width: 36px; --p-toggleswitch-height: 20px; --p-toggleswitch-handle-size: 14px; }
+.debug-limit-control { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.debug-limit-control > span:first-child { flex-shrink: 0; }
+.debug-limit-input { position: relative; display: block; width: 104px; min-width: 0; }
+.debug-limit-input input { padding-right: 32px; }
+.debug-limit-input input:disabled { background: #f3f5f3; color: var(--muted); cursor: not-allowed; }
+.debug-limit-suffix { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--muted); font-size: 14px; }
+.settings-form .panel { margin-bottom: 8px; }
+.settings-save { display: flex; align-items: center; justify-content: flex-end; gap: 8px; position: sticky; bottom: 0; background: var(--paper, #f5f6f3); padding: 8px 0; z-index: 1; }
+.settings-details { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.settings-details summary { font-size: 13px; cursor: pointer; color: var(--muted); min-height: 30px; line-height: 22px; padding: 4px 0; }
+.settings-details summary:focus-visible { outline: 2px solid #dc997e; outline-offset: 2px; }
+.settings-details summary:hover { color: var(--ink); }
+@media (max-width: 700px) {
+ .settings-categories { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+ .settings-categories button { padding: 5px 4px; }
+}
+
+/* 每个文件一行，类型标签跟随文件；目录路径通过按钮复制。 */
+.history-list .history-card:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
+.history-files { display: grid; gap: 4px; margin: 8px 0 4px; }
+.history-file { display: flex; align-items: center; gap: 8px; padding: 4px 6px; background: #f5f7f2; border-radius: 4px; min-width: 0; }
+.history-file .file-tags { display: flex; flex-wrap: wrap; gap: 4px; flex: 0 0 auto; }
+.history-file code { font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
+
+/* 标签靠近对应控件，避免误读相邻字段。 */
+.form-grid > label { text-align: right; }
+.form-grid > label > input, .form-grid > label > select, .form-grid > label > textarea { text-align: left; }
+
+/* 设置分组使用明确的内容间距，首行不加分割线，操作与编辑内容保持留白。 */
+.settings-panel .form-grid, .settings-panel .options-grid { margin: 0; }
+.settings-panel .options-grid + .form-grid { margin-top: 12px; }
+.settings-group { display: grid; gap: 8px; }
+.settings-group h3 { margin: 0; }
+.settings-group + .settings-group { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
+.settings-row { display: grid; align-items: center; gap: 8px 12px; padding: 10px 0; font-size: 13px; min-width: 0; }
+.settings-row + .settings-row { border-top: 1px solid var(--line); }
+.settings-row > strong, .settings-row > span { min-width: 0; overflow-wrap: anywhere; }
+.settings-version-row { grid-template-columns: 120px minmax(0, 1fr); }
+.settings-cookie-row { grid-template-columns: minmax(72px, 1fr) minmax(0, 1fr) auto; }
+.settings-row-actions, .settings-inline-actions, .settings-engine-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.settings-engine-actions { margin-bottom: 8px; }
+.settings-detail-content { display: grid; gap: 12px; margin-top: 8px; }
+.settings-detail-content textarea, .settings-cookie-form textarea { display: block; margin: 0; }
+.settings-cookie-form { margin-top: 12px; }
+@media (max-width: 700px) {
+ .settings-version-row { grid-template-columns: 80px minmax(0, 1fr); }
+ .settings-cookie-row { gap: 8px; }
+ .settings-row-actions { max-width: 180px; }
+ .settings-row-actions button { white-space: normal; overflow-wrap: anywhere; }
+}
+
+/* 任务配置与执行汇总共用紧凑表格，操作在单元格内换行。 */
+.management-table .task-name{max-width:230px;min-width:160px}
+/* 头像共用任务名称所在单元格，保持一配置一行和既有纵向密度。 */
+.task-author{display:flex;align-items:center;gap:8px;min-width:0}
+.task-avatar{width:32px;height:32px;object-fit:cover;border-radius:50%;flex-shrink:0}
+.task-author-text{min-width:0}
+.management-table .task-name strong,.management-table .task-name a{display:block;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.management-table .actions{min-width:240px;max-width:290px;white-space:normal}
+
+/* 队列窄屏保持文字横排，由表格容器滚动查看后续列。 */
+.task-table{min-width:680px}
+.task-table th,.task-table td,.task-table td small{white-space:nowrap}
+
+/* 文件说明跟随文件名，评论数量留在标签中，竖屏自动换行。 */
+.history-file .file-description { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; }
+@media (max-width: 700px) {
+ .history-file { flex-wrap: wrap; gap: 4px 8px; }
+ .history-file .file-description { flex: 1 1 180px; }
+}
+
+.history-actions { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+
+/* 存储操作与目录对应，窄屏将路径独立成行，按钮保持可见。 */
+.storage-row { display:grid; grid-template-columns:90px minmax(0,1fr) auto; gap:8px 12px; align-items:center; padding:12px 0; font-size:13px; }
+.storage-row + .storage-row { border-top:1px solid var(--line); }
+.storage-path { grid-column:2 / 4; overflow-wrap:anywhere; min-width:0; font-size:12px; }
+.storage-metrics { grid-column:2; display:flex; gap:12px; flex-wrap:wrap; color:var(--muted); }
+.storage-work-counts { grid-column:2 / 4; display:flex; flex-wrap:wrap; gap:4px 16px; font-size:12px; color:var(--muted); }
+@media(max-width:600px) {
+ .storage-row { grid-template-columns:minmax(0,1fr) auto; }
+ .storage-path { grid-column:1 / 3; }
+ .storage-metrics { grid-column:1; }
+ .storage-work-counts { grid-column:1 / 3; }
+}
