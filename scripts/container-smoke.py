@@ -19,6 +19,8 @@ GALLERY_VERSION = os.environ.get("GALLERY_DL_VERSION", RELEASE["gallery_dl"])
 YTDLP_VERSION = os.environ.get("YTDLP_VERSION", RELEASE["yt_dlp"])
 FFMPEG_VERSION = os.environ.get("FFMPEG_VERSION", RELEASE["ffmpeg"]).split("-")[0]
 BASE = f"http://127.0.0.1:{PORT}/api"
+# CI 按目标架构配置等待预算，模拟运行不使用原生执行的时间假设。
+SMOKE_TIMEOUT = float(os.environ.get("SMOKE_TIMEOUT", "30"))
 
 
 def docker(*args):
@@ -32,17 +34,54 @@ def request(path, method="GET", data=None):
         return json.load(response)
 
 
-def wait_until(read, check, timeout=30):
-    deadline = time.monotonic() + timeout
+def wait_until(read, check, timeout=None, stage="等待状态"):
+    timeout = SMOKE_TIMEOUT if timeout is None else timeout
+    started = time.monotonic()
+    deadline = started + timeout
+    next_report = started + 5
+    last = None
+    print(f"START {stage}: timeout={timeout:g}s", flush=True)
     while time.monotonic() < deadline:
         try:
-            value = read()
-            if check(value):
-                return value
-        except (urllib.error.URLError, ConnectionError):
-            pass
+            last = read()
+            if check(last):
+                print(f"DONE {stage}: {time.monotonic() - started:.1f}s", flush=True)
+                return last
+        except (urllib.error.URLError, ConnectionError) as error:
+            last = str(error)
+        now = time.monotonic()
+        if now >= next_report:
+            print(f"WAIT {stage}: {now - started:.1f}s", flush=True)
+            next_report = now + 5
         time.sleep(0.25)
-    raise AssertionError("等待状态超时")
+    raise AssertionError(f"{stage}超时（{timeout:g}s）；最后状态：{json.dumps(last, ensure_ascii=False)}")
+
+
+def download_state():
+    """下载已失败时直接报错，保持运行中状态才继续等待。"""
+    tasks = request("/tasks")
+    failed = [t for t in tasks if t["status"] == "failed"]
+    if failed:
+        raise AssertionError("下载任务失败：" + json.dumps(failed, ensure_ascii=False))
+    return request("/contents")
+
+
+def print_diagnostics(container):
+    """任务日志独立于服务标准输出，CI 失败时同时输出两者。"""
+    print("=== Container output ===", flush=True)
+    print(docker("logs", container), flush=True)
+    for path in ("/tasks", "/contents"):
+        try:
+            print(f"=== {path} ===", flush=True)
+            print(json.dumps(request(path), ensure_ascii=False, indent=2), flush=True)
+        except (urllib.error.URLError, ConnectionError) as error:
+            print(f"无法读取 {path}: {error}", flush=True)
+    try:
+        for sub in request("/subscriptions"):
+            print(f"=== Task log: {sub['id']} ===", flush=True)
+            print(request(f"/subscriptions/{sub['id']}/log")["log"], flush=True)
+    except (urllib.error.URLError, ConnectionError) as error:
+        print(f"无法读取任务日志: {error}", flush=True)
 
 
 def run_case(name, mounted, readonly_download=False):
@@ -62,7 +101,7 @@ def run_case(name, mounted, readonly_download=False):
     args.append(IMAGE)
     docker(*args)
     try:
-        dashboard = wait_until(lambda: request("/dashboard"), lambda d: d["version"] == APP_VERSION)
+        dashboard = wait_until(lambda: request("/dashboard"), lambda d: d["version"] == APP_VERSION, stage=f"{name} 服务启动")
         dirs = dashboard["directories"]
         assert all(d["uid"] == 1000 and d["gid"] == 1000 for d in dirs), dirs
         expected = "mounted" if mounted else "unmounted"
@@ -92,31 +131,31 @@ def run_case(name, mounted, readonly_download=False):
         payload = dict(platform="youtube", url="http://127.0.0.1:8001/fixture.mp4", display_name="fixture", enabled=False, schedule="", template="", cookie=False, archive=mounted and not readonly_download, youtube=options)
         sub = request("/subscriptions", "POST", payload)
         request(f"/subscriptions/{sub['id']}/scan?kind=full", "POST")
-        wait_until(lambda: request("/tasks"), lambda ts: any(t["kind"] == "full" and t["status"] == "completed" for t in ts))
+        wait_until(lambda: request("/tasks"), lambda ts: any(t["kind"] == "full" and t["status"] == "completed" for t in ts), stage=f"{name} 扫描完成")
         if readonly_download:
             tasks = request("/tasks")
             assert any(t["kind"] == "download" and t["status"] == "queued" for t in tasks), tasks
             assert not any(t["kind"] == "download" and t["status"] == "running" for t in tasks), tasks
         else:
-            items = wait_until(lambda: request("/contents"), lambda cs: len(cs) == 1 and cs[0]["status"] == "completed" and (not mounted or cs[0]["archived"]))
+            items = wait_until(download_state, lambda cs: len(cs) == 1 and cs[0]["status"] == "completed" and (not mounted or cs[0]["archived"]), stage=f"{name} 下载与归档完成")
             paths = items[0]["paths"]
             for suffix in (".mp4", ".audio.m4a", ".extracted.m4a", ".info.json"):
                 assert any(p.endswith(suffix) for p in paths), paths
             assert all(p.startswith("/archive/" if mounted else "/downloads/") for p in paths), paths
             request(f"/subscriptions/{sub['id']}/scan", "POST")
-            wait_until(lambda: request("/tasks"), lambda ts: len(ts) == 3 and all(t["status"] == "completed" for t in ts))
+            wait_until(lambda: request("/tasks"), lambda ts: len(ts) == 3 and all(t["status"] == "completed" for t in ts), stage=f"{name} 增量去重")
             assert len(request("/contents")) == 1
             if mounted:
                 # 同一个镜像重启后，数据库和挂载媒体仍然存在。
                 docker("restart", container)
-                wait_until(lambda: request("/subscriptions"), lambda ss: len(ss) == 1)
+                wait_until(lambda: request("/subscriptions"), lambda ss: len(ss) == 1, stage=f"{name} 重启恢复")
                 persisted = request("/contents")[0]
                 assert persisted["paths"] == paths and persisted["archived"]
                 for path in paths:
                     docker("exec", container, "test", "-f", path)
         print(f"PASS {name}: UID/GID、目录状态、引擎版本、队列与文件流程")
     except Exception:
-        print(docker("logs", container))
+        print_diagnostics(container)
         raise
     finally:
         if source is not None:

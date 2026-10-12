@@ -192,6 +192,8 @@ jobs:
         env:
           SMOKE_IMAGE: media-harbor-smoke:arm64
           SMOKE_PLATFORM: linux/arm64
+          # Ubuntu amd64 上由 QEMU 执行 Python 引擎与 FFmpeg，单阶段预算独立设置。
+          SMOKE_TIMEOUT: '180'
           GALLERY_DL_VERSION: ${{ env.GALLERY }}
           YTDLP_VERSION: ${{ env.YTDLP }}
           FFMPEG_VERSION: ${{ env.FFMPEG }}
