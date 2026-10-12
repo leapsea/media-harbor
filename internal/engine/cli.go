@@ -99,7 +99,7 @@ func (c CLI) Scan(ctx context.Context, s domain.Subscription, itemLimit int, log
 		}
 		log("使用 gallery-dl 递归流式枚举媒体，发现后立即加入下载队列")
 		args = append(args, "--resolve-json", "--", s.URL)
-		args = append([]string{"-u", "-c", instagramStream}, args...)
+		args = append([]string{"-u", "-c", instagramScript(instagramStream)}, args...)
 		name = "python3"
 	}
 	return scanStream(ctx, name, args, s, log, emit)
@@ -272,7 +272,8 @@ func (c CLI) Download(ctx context.Context, s domain.Subscription, item domain.Co
 		var output strings.Builder
 		var outputMu sync.Mutex
 		// stdout 与 stderr 由不同复制协程回调，共享诊断文本需要同步。
-		_, e := run(ctx, "gallery-dl", args, func(message string) {
+		args = append([]string{"-u", "-c", instagramScript("import gallery_dl\ngallery_dl.main()\n")}, args...)
+		_, e := run(ctx, "python3", args, func(message string) {
 			outputMu.Lock()
 			output.WriteString(message)
 			outputMu.Unlock()

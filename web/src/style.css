@@ -140,6 +140,9 @@ textarea{resize:vertical;margin-bottom:8px;line-height:1.5}
 .modal .form-actions{position:sticky;bottom:-20px;background:#fff;padding:10px 0;margin-top:12px;box-shadow:0 -6px 8px #fff}
 /* 日志正文独立滚动，标题和关闭按钮保持在固定区域。 */
 .log-modal{max-width:820px;display:flex;flex-direction:column;overflow:hidden}
+.dryrun-backdrop{z-index:21}
+.dryrun-backdrop .form-actions{flex:0 0 auto;align-items:center}
+.dryrun-backdrop .form-actions>span{margin-right:auto;font-size:13px}
 .log-modal>.section-top{flex:0 0 auto}
 .log-modal .log-content{flex:1 1 auto;min-height:0;overflow:auto;margin:12px 0 0;overscroll-behavior:contain;resize:none;height:55vh;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6;white-space:pre;tab-size:2}
 .youtube-symbol{color:#cf6344}

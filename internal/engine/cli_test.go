@@ -253,7 +253,7 @@ printf 'download started\n'
 printf '[instagram][error] HTTP redirect to login page\n' >&2
 exit 4
 `
-	if err := os.WriteFile(filepath.Join(root, "gallery-dl"), []byte(script), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "python3"), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))

@@ -27,6 +27,7 @@ type API struct{ app *service.App }
 func Handler(app *service.App) http.Handler {
 	api := &API{app}
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/subscriptions/dryrun", api.dryRun)
 	mux.HandleFunc("GET /api/dashboard", api.dashboard)
 	mux.HandleFunc("GET /api/subscriptions", func(w http.ResponseWriter, r *http.Request) { v, e := app.SubscriptionViews(); reply(w, v, e) })
 	// 头像由同源接口读取本地文件，避免前端依赖带签名的 Instagram CDN 地址。

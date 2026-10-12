@@ -23,6 +23,15 @@ const ScanQueueCheckInterval = time.Second
 // ScanLogInterval 控制扫描等待期间的可见进度频率。
 const ScanLogInterval = 5 * time.Second
 
+// DryRunItemLimit 在未启用调试限制时只验证前十个条目，避免枚举全部历史。
+const DryRunItemLimit = 10
+
+// DryRunProbeBytes 验证远端响应可读取，内容只留在内存中并立即丢弃。
+const DryRunProbeBytes = 64 * 1024
+
+// DryRunManifestDepth 允许探测主清单、媒体清单及首个媒体分片。
+const DryRunManifestDepth = 3
+
 // YouTubeMetadataURL 使用官方公开作者信息，视频解析无需下载媒体。
 const YouTubeMetadataURL = "https://www.youtube.com/oembed"
 

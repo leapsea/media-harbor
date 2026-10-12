@@ -133,6 +133,11 @@ type AvatarDownloader interface {
 	UpdateAvatar(context.Context, Subscription, func(string)) error
 }
 
+// DryRunner 验证未保存配置的远端请求，不修改任务、产物或日志文件。
+type DryRunner interface {
+	DryRun(context.Context, Subscription, YouTubeOptions, int, func(string)) error
+}
+
 // DownloadHistoryRepository 隔离历史展示生命周期，不删除下载索引或文件。
 type DownloadHistoryRepository interface {
 	DownloadHistory() ([]Content, error)

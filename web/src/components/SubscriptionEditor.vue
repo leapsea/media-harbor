@@ -7,6 +7,8 @@ import YouTubeOptions from './YouTubeOptions.vue'
 import SchedulePicker from './SchedulePicker.vue'
 import { taskMode } from '../utils/taskMode'
 import { directoryNameFromUrl } from '../utils/directoryName'
+import { useDryRun } from '../composables/useDryRun'
+import DryRunLog from './DryRunLog.vue'
 
 /**
  * 编辑使用独立副本，取消不会影响 Dashboard 当前状态。
@@ -14,6 +16,7 @@ import { directoryNameFromUrl } from '../utils/directoryName'
 const props = defineProps<{ subscription: Subscription | null; settings: Settings; archiveAvailable: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const store = useMediaStore()
+const dryrun = useDryRun()
 const form = ref<Subscription>(props.subscription ? structuredClone(toRaw(props.subscription)) : {
  id: 0, platform: 'youtube', url: '', mode: 'profile', stable_id: '', display_name: '', current_name: '',
  enabled: true, schedule: '@every 6h', template: '',
@@ -92,6 +95,15 @@ async function save() {
  }, form.value.id ? '任务已保存' : mode.value === 'content' ? '任务已创建，立即执行' : '任务已创建，等待手动启动')
  if (ok) emit('close')
 }
+
+/** 试运行使用当前未保存的表单选项，不触发名称保存、任务创建或队列执行。 */
+function dryRun() {
+ if (nameTimer) clearTimeout(nameTimer)
+ try { const address = new URL(form.value.url); if (!['http:', 'https:'].includes(address.protocol)) throw new Error() }
+ catch { store.reportError(new Error(t('请输入有效任务 URL'))); return }
+ const { last_scan, last_success, next_run, created_at, ...payload } = form.value
+ void dryrun.start({ ...payload, youtube: override.value ? options.value : null })
+}
 </script>
 
 <template>
@@ -124,8 +136,9 @@ async function save() {
      <YouTubeOptions v-if="override" v-model="options" />
     </template>
     </details>
-    <footer class="form-actions"><button type="button" @click="emit('close')">{{ t("取消") }}</button><button class="primary" :disabled="store.busy || nameLoading">{{ nameLoading ? t("正在解析作者…") : store.busy ? t("正在保存…") : t("保存任务") }}</button></footer>
+    <footer class="form-actions"><button type="button" @click="emit('close')">{{ t("取消") }}</button><button v-if="!form.id" type="button" :disabled="store.busy || nameLoading || dryrun.running.value || !form.url.trim()" @click="dryRun">{{ dryrun.running.value ? t('验证中…') : 'Dryrun' }}</button><button class="primary" :disabled="store.busy || nameLoading || dryrun.running.value">{{ nameLoading ? t("正在解析作者…") : store.busy ? t("正在保存…") : t("保存任务") }}</button></footer>
    </form>
   </section>
  </div>
+ <DryRunLog v-if="dryrun.visible.value" :log="dryrun.log.value" :status="dryrun.status.value" :running="dryrun.running.value" @close="dryrun.close" />
 </template>

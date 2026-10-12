@@ -234,5 +234,13 @@
   "可清理：{count} 项": "Cleanable: {count} entries",
   "续接 / 重试保留：{count} 项": "Retained for resume / retry: {count} entries",
   "日志已清空": "Logs cleared",
-  "无用缓存已清理": "Unused cache cleaned"
+  "无用缓存已清理": "Unused cache cleaned",
+  "Dryrun 日志": "Dryrun log",
+  "验证中…": "Checking…",
+  "验证通过": "Check passed",
+  "验证失败": "Check failed",
+  "验证连接已中断": "Check connection interrupted",
+  "已停止": "Stopped",
+  "停止并关闭": "Stop and close",
+  "请输入有效任务 URL": "Enter a valid task URL"
 }
