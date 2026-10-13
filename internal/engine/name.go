@@ -87,3 +87,29 @@ func youtubeAuthor(entry youtubeEntry) string {
 	}
 	return ""
 }
+
+// ResolveAuthor 只解析 Instagram 头像元数据，主页与详情取得同一稳定作者身份。
+// dump-json 不下载媒体；头像文件在任务保存成功后由应用服务获取。
+func (c CLI) ResolveAuthor(ctx context.Context, s domain.Subscription) (domain.ScanResult, error) {
+	name, err := c.ResolveName(ctx, s)
+	if err != nil {
+		return domain.ScanResult{}, err
+	}
+	if s.Platform != "instagram" {
+		return domain.ScanResult{CurrentName: name}, nil
+	}
+	args := append(c.common(s), "--dump-json", "--range", "1", "--", "https://www.instagram.com/"+url.PathEscape(name)+"/avatar/")
+	raw, err := run(ctx, "gallery-dl", args, func(string) {}, true)
+	if err != nil {
+		return domain.ScanResult{}, fmt.Errorf("解析头像作者失败：%w", err)
+	}
+	author, err := parseInstagram(raw)
+	if err != nil {
+		return domain.ScanResult{}, err
+	}
+	if author.StableID == "" || author.CurrentName == "" {
+		return domain.ScanResult{}, fmt.Errorf("头像元数据未返回稳定作者身份")
+	}
+	author.Items = nil
+	return author, nil
+}

@@ -183,6 +183,11 @@ type NameResolver interface {
 	ResolveName(context.Context, Subscription) (string, error)
 }
 
+// AuthorResolver 在创建时取得稳定作者身份，不枚举或排队媒体内容。
+type AuthorResolver interface {
+	ResolveAuthor(context.Context, Subscription) (ScanResult, error)
+}
+
 // AvatarDownloader 是媒体下载任务的可选附属能力，保存位置由应用服务指定。
 type AvatarDownloader interface {
 	UpdateAvatar(context.Context, Subscription, string, func(string)) error

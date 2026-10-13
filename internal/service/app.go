@@ -107,7 +107,9 @@ func (a *App) SaveSubscription(s *domain.Subscription) error {
 				s.DisplayName = "subscription-" + strconv.FormatInt(s.CreatedAt.UnixNano(), 10)
 			}
 		}
-		s.CurrentName = s.DisplayName
+		if s.CurrentName == "" {
+			s.CurrentName = s.DisplayName
+		}
 	}
 	s.NextRun = next
 	if s.LastScan.IsZero() || s.Mode == "content" {
@@ -671,11 +673,6 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 	log(fmt.Sprintf("开始下载帖子：%s · %s；资源序号 %d；发布日期 %s", c.RemoteID, c.Title, c.Asset, publicationLabel(c.Published)))
 	log("请求资源地址：" + c.URL)
 	e = a.Engine.Download(ctx, s, c, options, dir, log)
-	// 只有媒体下载成功才获取头像；单纯扫描与空队列不会留下头像文件。
-	if e == nil && ctx.Err() == nil {
-		// 头像输出仅写日志，不更新媒体进度，归档持锁等待时不会反向申请任务锁。
-		a.updateDownloadAvatar(ctx, s, func(msg string) { a.writeTaskLog(writer, t, msg) })
-	}
 	downloadErr := e
 	// 以当前语言的下载元数据刷新标题，已存在的媒体文件也无需重新下载。
 	if s.Platform == "youtube" {

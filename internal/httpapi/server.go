@@ -196,7 +196,11 @@ func (api *API) saveSubscription(w http.ResponseWriter, r *http.Request) {
 		} else {
 			v.ID = 0
 		}
-		e = api.app.SaveSubscription(&v)
+		if r.Method == http.MethodPost {
+			e = api.app.CreateSubscription(r.Context(), &v)
+		} else {
+			e = api.app.SaveSubscription(&v)
+		}
 	}
 	reply(w, v, e)
 }

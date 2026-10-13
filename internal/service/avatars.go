@@ -60,9 +60,9 @@ func (a *App) avatarFile(sub domain.Subscription) (string, error) {
 	return "", os.ErrNotExist
 }
 
-// updateDownloadAvatar 在媒体成功后更新共享头像，失败只记录到所属下载任务。
+// updateCreationAvatar 在任务创建解析阶段更新共享头像，失败只记录到任务配置日志。
 // 已归档头像在原位置更新，同大小不覆盖，不额外复制一份到下载目录。
-func (a *App) updateDownloadAvatar(ctx context.Context, sub domain.Subscription, log func(string)) {
+func (a *App) updateCreationAvatar(ctx context.Context, sub domain.Subscription, log func(string)) {
 	downloader, ok := a.Engine.(domain.AvatarDownloader)
 	if !ok || sub.Platform != "instagram" || sub.StableID == "" {
 		return

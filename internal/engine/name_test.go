@@ -120,3 +120,23 @@ func TestInstagramRequestHeaders(t *testing.T) {
 		t.Fatal("Instagram headers leaked into YouTube")
 	}
 }
+
+// TestResolveAvatarAuthor 验证创建只解析一条头像元数据，稳定身份与媒体列表分离。
+func TestResolveAvatarAuthor(t *testing.T) {
+	root := t.TempDir()
+	script := `#!/bin/sh
+case "$*" in
+ *--dump-json*--range\ 1*https://www.instagram.com/alice/avatar/*) ;;
+ *) exit 1 ;;
+esac
+printf '%s' '[[3,"https://example.test/avatar.jpg",{"owner_id":"123","username":"alice","post_id":"avatar","extension":"jpg"}]]'
+`
+	if err := os.WriteFile(filepath.Join(root, "gallery-dl"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	author, err := (CLI{DataDir: root}).ResolveAuthor(context.Background(), domain.Subscription{Platform: "instagram", URL: "https://www.instagram.com/alice/"})
+	if err != nil || author.StableID != "123" || author.CurrentName != "alice" || len(author.Items) != 0 {
+		t.Fatal(author, err)
+	}
+}
