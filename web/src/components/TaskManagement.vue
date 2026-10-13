@@ -16,7 +16,7 @@ const store = useMediaStore()
 /** 详情只在打开时加载，管理列表仍按每个配置一行展示。 */
 const TaskDetails = defineAsyncComponent(() => import('./TaskDetails.vue'))
 const detailTask = ref<Subscription | null>(null)
-const { page, size, items } = usePagination(() => store.subscriptions, () => store.settings!.ui.task_page_size)
+const { page, size, items } = usePagination(() => store.subscriptions, () => store.settings?.ui.task_page_size ?? 20)
 /** 轮询后只构造一次索引，模板中多次读取状态不反复遍历队列。 */
 const groups = computed(() => new Map(store.taskGroups.map(item => [item.subscription_id, item])))
 const group = (id: number) => groups.value.get(id)
@@ -43,13 +43,14 @@ async function action(id: number, kind: 'cancel' | 'retry') {
 <template>
  <section class="panel" :aria-label="t('任务列表')">
   <!-- 页面标题由应用入口提供，总数量由分页控件统一展示。 -->
-  <p v-if="!store.subscriptions.length" class="empty">{{ t("暂无任务") }}</p>
+  <p v-if="!store.subscriptionsLoaded" class="empty">{{ t("加载中") }}</p>
+  <p v-else-if="!store.subscriptions.length" class="empty">{{ t("暂无任务") }}</p>
   <!-- 配置、状态和下载汇总在同一行；窄屏只在表格内部横向滚动。 -->
-  <div v-else class="table-wrap"><table class="task-table management-table"><thead><tr><th>{{ t("任务") }}</th><th>{{ t("平台 / 执行方式") }}</th><th>{{ t("任务状态") }}</th><th>{{ t("下载进度") }}</th><th>{{ t("最近更新") }}</th><th>{{ t("操作") }}</th></tr></thead>
+  <div class="table-wrap"><table class="task-table management-table"><thead><tr><th>{{ t("任务") }}</th><th>{{ t("平台 / 执行方式") }}</th><th>{{ t("任务状态") }}</th><th>{{ t("下载进度") }}</th><th>{{ t("最近更新") }}</th><th>{{ t("操作") }}</th></tr></thead>
    <tbody><tr v-for="task in items" :key="task.id">
     <td class="task-name"><div class="task-author"><img v-if="task.avatar_url" class="task-avatar" :src="task.avatar_url" alt="" loading="lazy"><div class="task-author-text"><strong>{{ task.display_name }}</strong><a :href="task.url" target="_blank" rel="noreferrer" :title="task.url">{{ task.url }}</a></div></div></td>
     <td><span class="badge">{{ task.platform === 'youtube' ? 'YouTube' : 'Instagram' }}</span><small class="help">{{ schedule(task) }}</small><small v-if="!isContent(task)" class="help">{{ !group(task.id) ? t("首次启动后启用周期") : task.enabled ? t('下次 {time}', { time: formatDate(task.next_run) }) : t("定时已暂停") }}</small></td>
-    <td><span class="badge" :class="group(task.id)?.status">{{ t(props.labels[group(task.id)?.status || ''] || t("未开始")) }}</span><small v-if="group(task.id)?.scan_status" class="help">{{ isContent(task) ? t("内容解析") : t("扫描") }} · {{ t(props.labels[group(task.id)!.scan_status]) }}</small></td>
+    <td><span class="badge" :class="group(task.id)?.status">{{ t(store.taskGroupsLoaded ? props.labels[group(task.id)?.status || ''] || t("未开始") : t("加载中")) }}</span><small v-if="group(task.id)?.scan_status" class="help">{{ isContent(task) ? t("内容解析") : t("扫描") }} · {{ t(props.labels[group(task.id)!.scan_status]) }}</small></td>
     <td><strong>{{ group(task.id)?.counts.completed || 0 }} / {{ group(task.id)?.total || 0 }}</strong><small class="help">{{ t('待执行 {queued} · 运行 {running} · 失败 {failed}', { queued: group(task.id)?.counts.queued || 0, running: group(task.id)?.counts.running || 0, failed: group(task.id)?.counts.failed || 0 }) }}<template v-if="group(task.id)?.counts.skipped"> · {{ t('已跳过 {count}', { count: group(task.id)!.counts.skipped }) }}</template></small></td>
     <td>{{ formatDate(group(task.id)?.updated_at || task.created_at) }}</td>
     <td><div class="actions">

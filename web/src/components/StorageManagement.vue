@@ -29,18 +29,18 @@ onMounted(refresh)
 <template>
  <section class="panel settings-panel storage-panel" :aria-label="t('存储管理')">
   <div class="settings-engine-actions"><button :disabled="loading || store.busy" @click="refresh">{{ loading ? t('正在刷新…') : t('刷新占用') }}</button></div>
-  <template v-if="storage">
+  <!-- 占用未知时保留行布局和标签，只有依赖真实数量的清理按钮禁用。 -->
    <div class="storage-row">
-    <strong>{{ t('任务日志') }}</strong><code class="storage-path">{{ storage.logs.path }}</code>
-    <div class="storage-metrics"><span>{{ size(storage.logs.bytes) }}</span><span>{{ t('{count} 个文件', { count: storage.logs.files }) }}</span></div>
-    <button class="danger" :disabled="store.busy || loading || !storage.logs.files" @click="clean('logs')">{{ t('清空日志') }}</button>
+    <strong>{{ t('任务日志') }}</strong><code class="storage-path">{{ storage?.logs.path || '—' }}</code>
+    <div class="storage-metrics"><span>{{ storage ? size(storage.logs.bytes) : '—' }}</span><span>{{ t('{count} 个文件', { count: storage?.logs.files ?? '—' }) }}</span></div>
+    <button class="danger" :disabled="store.busy || loading || !storage?.logs.files" @click="clean('logs')">{{ t('清空日志') }}</button>
    </div>
    <div class="storage-row">
-    <strong>{{ t('工作缓存') }}</strong><code class="storage-path">{{ storage.work.path }}</code>
-    <div class="storage-metrics"><span>{{ size(storage.work.bytes) }}</span><span>{{ t('{count} 个文件', { count: storage.work.files }) }}</span></div>
-    <button :disabled="store.busy || loading || !storage.work.cleanable_directories" @click="clean('work')">{{ t('清理无用缓存') }}</button>
-    <div class="storage-work-counts"><span>{{ t('可清理：{count} 项', { count: storage.work.cleanable_directories }) }} · {{ size(storage.work.cleanable_bytes) }}</span><span>{{ t('续接 / 重试保留：{count} 项', { count: storage.work.retained_directories }) }}</span></div>
+    <strong>{{ t('工作缓存') }}</strong><code class="storage-path">{{ storage?.work.path || '—' }}</code>
+    <div class="storage-metrics"><span>{{ storage ? size(storage.work.bytes) : '—' }}</span><span>{{ t('{count} 个文件', { count: storage?.work.files ?? '—' }) }}</span></div>
+    <button :disabled="store.busy || loading || !storage?.work.cleanable_directories" @click="clean('work')">{{ t('清理无用缓存') }}</button>
+    <div class="storage-work-counts"><span>{{ t('可清理：{count} 项', { count: storage?.work.cleanable_directories ?? '—' }) }} · {{ storage ? size(storage.work.cleanable_bytes) : '—' }}</span><span>{{ t('续接 / 重试保留：{count} 项', { count: storage?.work.retained_directories ?? '—' }) }}</span></div>
    </div>
-  </template>
+
  </section>
 </template>

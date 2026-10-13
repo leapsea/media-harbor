@@ -589,7 +589,8 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 				pending += w
 				skipped += v
 				discovered++
-				log(fmt.Sprintf("解析帖子 %s · %s；资源序号 %d；发布日期 %s；累计资源 %d 项；新增 %d 项；已存在 %d 项", item.RemoteID, item.Title, item.Asset, publicationLabel(item.Published), discovered, added, skipped+completed+pending))
+				// 原帖地址放在多行正文之前，每个资源的首行日志都能直接溯源。
+				log(fmt.Sprintf("解析帖子 %s；帖子地址：%s；标题：%s；资源序号 %d；发布日期 %s；累计资源 %d 项；新增 %d 项；已存在 %d 项", item.RemoteID, item.URL, item.Title, item.Asset, publicationLabel(item.Published), discovered, added, skipped+completed+pending))
 			}
 			return nil
 		}

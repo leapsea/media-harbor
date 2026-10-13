@@ -22,7 +22,6 @@ const log = ref<string | null>(null)
 const logLoading = ref(false)
 const logSubscription = ref(0)
 const logArea = ref<HTMLTextAreaElement | null>(null)
-const loadedPage = ref<string | null>(null)
 let logRequestId = 0
 let polling: ReturnType<typeof setInterval> | undefined
 let refreshError = ''
@@ -34,17 +33,18 @@ const labels: Record<string, string> = { queued: '待执行', running: '运行�
 /** 页面切换后只装载该页的数据，避免将总览快照作为全局刷新依赖。 */
 watch(page, current => {
  window.scrollTo({ top: 0 })
- loadedPage.value = null
  store.setActivePage(current)
  void refreshCurrentPage()
 }, { flush: 'post' })
 
-function edit(subscription: Subscription | null) { selected.value = subscription; editing.value = true }
+function edit(subscription: Subscription | null) { selected.value = subscription; editing.value = true; if (!store.settings) void store.refresh('tasks').catch(store.reportError) }
 async function showLog(id: number) {
+ if (logLoading.value && logSubscription.value === id) return
  const opening = log.value === null
  logSubscription.value = id
  const requestId = ++logRequestId
- if (opening) { log.value = ''; logLoading.value = true }
+ if (opening) log.value = ''
+ logLoading.value = true
  const pending = api<{ log: string }>(`/subscriptions/${id}/log`)
  if (opening) { await nextTick(); logArea.value?.focus() }
  try {
@@ -52,7 +52,7 @@ async function showLog(id: number) {
   if (requestId === logRequestId && log.value !== null) log.value = result.log
  }
  catch (e) { if (requestId === logRequestId && log.value !== null) store.reportError(e) }
- finally { if (requestId === logRequestId && opening) logLoading.value = false }
+ finally { if (requestId === logRequestId) logLoading.value = false }
 }
 function closeLog() { logRequestId++; logLoading.value = false; log.value = null }
 
@@ -72,7 +72,6 @@ async function refreshCurrentPage() {
  store.setActivePage(current)
  try {
   await store.refresh(current)
-  if (page.value === current) loadedPage.value = current
   refreshError = ''
  }
  catch (e) {
@@ -85,9 +84,9 @@ async function refreshCurrentPage() {
 /**
  * 轮询负责读状态，写操作等待状态由 Store 独立控制。
  */
-onMounted(async () => {
+onMounted(() => {
  store.setActivePage(page.value)
- await refreshCurrentPage()
+ void refreshCurrentPage()
  polling = setInterval(async () => {
   if (store.busy || store.refreshing) return
   await refreshCurrentPage()
@@ -108,17 +107,16 @@ onUnmounted(() => { if (polling) clearInterval(polling) })
    <div class="sidebar-footer"><span class="online-dot"></span><span v-if="store.dashboard?.version">V{{ store.dashboard.version }}</span></div>
   </aside>
   <main>
-   <header class="page-header"><h1>{{ t(title) }}</h1><button v-if="!['settings', 'overview'].includes(page)" class="primary" :disabled="!store.settings || store.busy" @click="edit(null)"><span>＋</span> {{ t("新增任务") }}</button></header>
-   <p v-if="loadedPage !== page" class="empty">{{ t("正在加载工作台…") }}</p>
-   <template v-if="page === 'overview' && loadedPage === 'overview' && store.dashboard">
+   <header class="page-header"><h1>{{ t(title) }}</h1><button v-if="!['settings', 'overview'].includes(page)" class="primary" :disabled="store.busy" @click="edit(null)"><span>＋</span> {{ t("新增任务") }}</button></header>
+   <template v-if="page === 'overview'">
     <!-- 概览优先呈现运行数据，统计不附加重复说明。 -->
-    <div class="stats"><article><span>{{ t("任务总数") }}</span><strong>{{ store.dashboard.subscriptions }}</strong></article><article><span>{{ t("待执行 / 运行中") }}</span><strong>{{ store.dashboard.counts.queued }} <i>/</i> {{ store.dashboard.counts.running }}</strong></article><article><span>{{ t("已完成任务") }}</span><strong>{{ store.dashboard.counts.completed }}</strong></article><article><span>{{ t("失败任务") }}</span><strong :class="{ 'failure-number': store.dashboard.counts.failed }">{{ store.dashboard.counts.failed }}</strong></article></div>
-    <section class="panel overview-panel"><div class="section-top"><h2>{{ t("最近下载") }}</h2><button @click="page = 'history'">{{ t("全部历史 →") }}</button></div><p v-if="!store.dashboard.recent.length" class="empty">{{ t("暂无下载记录") }}</p><div v-for="item in store.dashboard.recent" :key="item.id" class="media-row"><div class="media-icon">↓</div><div class="grow"><strong>{{ item.title || item.remote_id }}</strong><small>{{ store.dashboard.subscription_names[item.subscription_id] || store.subscriptionName(item.subscription_id) }} · {{ item.remote_id }}</small></div><span class="badge" :class="item.status">{{ t(labels[item.status]) }}</span></div></section>
+    <div class="stats"><article><span>{{ t("任务总数") }}</span><strong>{{ store.dashboard?.subscriptions ?? '—' }}</strong></article><article><span>{{ t("待执行 / 运行中") }}</span><strong>{{ store.dashboard?.counts.queued ?? '—' }} <i>/</i> {{ store.dashboard?.counts.running ?? '—' }}</strong></article><article><span>{{ t("已完成任务") }}</span><strong>{{ store.dashboard?.counts.completed ?? '—' }}</strong></article><article><span>{{ t("失败任务") }}</span><strong :class="{ 'failure-number': store.dashboard?.counts.failed }">{{ store.dashboard?.counts.failed ?? '—' }}</strong></article></div>
+    <section class="panel overview-panel"><div class="section-top"><h2>{{ t("最近下载") }}</h2><button @click="page = 'history'">{{ t("全部历史 →") }}</button></div><p v-if="!store.dashboard?.recent.length" class="empty">{{ store.dashboard ? t("暂无下载记录") : t("加载中") }}</p><div v-for="item in store.dashboard?.recent || []" :key="item.id" class="media-row"><div class="media-icon">↓</div><div class="grow"><strong>{{ item.title || item.remote_id }}</strong><small>{{ store.dashboard!.subscription_names[item.subscription_id] || store.subscriptionName(item.subscription_id) }} · {{ item.remote_id }}</small></div><span class="badge" :class="item.status">{{ t(labels[item.status]) }}</span></div></section>
     <!-- 目录按行展示，权限、挂载与检查时间可在同一屏比较。 -->
     <section class="panel overview-panel">
-     <div class="section-top"><h2>{{ t("存储目录") }}</h2><div class="directory-actions"><span v-if="store.dashboard.directories[0]" class="help">UID {{ store.dashboard.directories[0].uid }} / GID {{ store.dashboard.directories[0].gid }}</span><button :disabled="store.busy" @click="store.mutate(() => api('/directories/check', 'POST'), t('目录检测已完成'))">{{ store.busy ? t("检测中…") : t("重新检测") }}</button></div></div>
+     <div class="section-top"><h2>{{ t("存储目录") }}</h2><div class="directory-actions"><span v-if="store.directories[0]" class="help">UID {{ store.directories[0].uid }} / GID {{ store.directories[0].gid }}</span><button :disabled="store.busy" @click="store.mutate(() => api('/directories/check', 'POST'), t('目录检测已完成'))">{{ store.busy ? t("检测中…") : t("重新检测") }}</button></div></div>
      <div class="directory-list">
-      <article v-for="dir in store.dashboard.directories" :key="dir.path" class="directory-row">
+      <article v-for="dir in store.directories" :key="dir.path" class="directory-row">
        <div class="directory-location"><h3>{{ t(dir.name) }}</h3><code :title="dir.path">{{ dir.path }}</code><p v-if="dir.error" class="error">{{ dir.error }}</p><p v-else-if="dir.name === '归档数据' && dir.mounted !== 'mounted'" class="directory-note">{{ t("归档暂不可用") }}</p></div>
        <div class="directory-state"><span class="badge" :class="dir.writable ? 'completed' : 'failed'">{{ dir.writable ? t("可读写") : t("不可用") }}</span><span class="mount-state">{{ t(labels[dir.mounted]) }}</span></div>
        <time class="directory-time" :datetime="dir.checked_at">{{ formatDate(dir.checked_at) }}</time>
@@ -126,11 +124,13 @@ onUnmounted(() => { if (polling) clearInterval(polling) })
      </div>
     </section>
    </template>
-   <TaskManagement v-if="page === 'tasks' && loadedPage === 'tasks'" :labels="labels" @log="showLog" @edit="edit" />
-   <DownloadHistory v-if="page === 'history' && loadedPage === 'history'" :labels="labels" />
-   <SystemSettings v-if="page === 'settings' && loadedPage === 'settings' && store.settings" :settings="store.settings" />
+   <TaskManagement v-if="page === 'tasks'" :labels="labels" @log="showLog" @edit="edit" />
+   <DownloadHistory v-if="page === 'history'" :labels="labels" />
+   <SystemSettings v-if="page === 'settings'" :settings="store.settings" />
   </main>
+  <!-- 表单依赖配置时仍立即显示可关闭的弹窗，读取完成后填入真实表单。 -->
+  <div v-if="editing && !store.settings" class="modal-backdrop"><section class="modal subscription-modal" role="dialog" aria-modal="true" aria-labelledby="pending-editor-title"><div class="section-top"><h2 id="pending-editor-title">{{ selected ? t('编辑任务') : t('新增任务') }}</h2><button class="icon-button" :aria-label="t('关闭')" @click="editing = false">×</button></div><p class="empty">{{ t('加载中') }}</p><footer class="form-actions"><button @click="editing = false">{{ t('取消') }}</button></footer></section></div>
   <SubscriptionEditor v-if="editing && store.settings" :subscription="selected" :settings="store.settings" :archive-available="Boolean(store.archiveAvailable)" @close="editing = false" />
-  <div v-if="log !== null" class="modal-backdrop"><section class="modal log-modal" @keydown.capture="selectLog" role="dialog" aria-modal="true" aria-labelledby="log-title"><div class="section-top"><h2 id="log-title">{{ t('{name} · 任务日志', { name: store.subscriptionName(logSubscription) }) }}</h2><button class="icon-button" :aria-label="t('关闭日志')" @click="closeLog">×</button></div><textarea ref="logArea" class="log-content" :aria-label="t('任务日志内容')" :value="logLoading ? t('加载中') : log" readonly spellcheck="false"></textarea></section></div>
+  <div v-if="log !== null" class="modal-backdrop"><section class="modal log-modal" @keydown.capture="selectLog" role="dialog" aria-modal="true" aria-labelledby="log-title"><div class="section-top"><h2 id="log-title">{{ t('{name} · 任务日志', { name: store.subscriptionName(logSubscription) }) }}</h2><button class="icon-button" :aria-label="t('关闭日志')" @click="closeLog">×</button></div><textarea ref="logArea" class="log-content" :aria-label="t('任务日志内容')" :value="logLoading && !log ? t('加载中') : log" readonly spellcheck="false"></textarea></section></div>
  </div>
 </template>

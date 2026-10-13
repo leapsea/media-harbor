@@ -25,6 +25,11 @@ const form = ref<Subscription>(props.subscription ? structuredClone(toRaw(props.
 })
 const override = ref(form.value.youtube !== null)
 const options = ref(structuredClone(toRaw(form.value.youtube || props.settings.youtube)))
+/** 目录状态晚到时补入真实归档默认值，用户已选过的值继续保留。 */
+const archiveTouched = ref(false)
+watch(() => props.archiveAvailable, available => {
+ if (!form.value.id && !archiveTouched.value) form.value.archive = available && props.settings.auto_archive
+})
 const mode = computed(() => taskMode(form.value.platform, form.value.url))
 /** 地址切换立即调整执行方式；主页保持按间隔，详情固定单次。 */
 watch(mode, value => {
@@ -122,7 +127,7 @@ function dryRun() {
      <label>{{ t("任务地址") }}<input v-model="form.url" type="url" required :placeholder="form.platform === 'youtube' ? t('YouTube 频道、播放列表或视频链接') : t('Instagram 主页、帖子或 Reel 链接')"></label>
      <label>{{ t("目录名称") }}<input v-model="form.display_name" :disabled="Boolean(form.id)" :placeholder="nameLoading ? t('正在解析作者名称…') : t('作者名称')" required @input="customName = Boolean(form.display_name)"></label>
      <SchedulePicker v-model="form.schedule" :immediate="mode === 'content'" />
-     <label>{{ t("自动归档") }}<select v-model="form.archive" :disabled="!archiveAvailable && !form.archive"><option :value="false">{{ archiveAvailable ? t("不归档 · 保留在下载目录") : t("归档不可用 · 未挂载或不可写") }}</option><option :value="true" :disabled="!archiveAvailable">{{ t("归档 · 移入归档目录") }}</option></select></label>
+     <label>{{ t("自动归档") }}<select v-model="form.archive" :disabled="!archiveAvailable && !form.archive" @change="archiveTouched = true"><option :value="false">{{ archiveAvailable ? t("不归档 · 保留在下载目录") : t("归档不可用 · 未挂载或不可写") }}</option><option :value="true" :disabled="!archiveAvailable">{{ t("归档 · 移入归档目录") }}</option></select></label>
      <label>{{ t("目录模板") }}<input v-model="form.template" :placeholder="settings.template"></label>
     </div>
     <!-- 次要选项可展开查看，主要字段保持用户指定的顺序。 -->

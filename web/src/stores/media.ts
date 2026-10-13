@@ -6,6 +6,7 @@ import type { Dashboard, Subscription, Content, ContentHistoryPage, Settings, Ta
 import type { Directory } from '../types'
 import type { PageId } from '../utils/hashRoute'
 import { confirmMutation } from '../utils/mutation'
+import { createRequestPool } from '../utils/requestPool'
 
 /**
  * 同源请求只在这里处理错误，组件不重复实现数据读取逻辑。
@@ -37,10 +38,14 @@ export const useMediaStore = defineStore('media', () => {
  const directories = ref<Directory[]>([])
  const settings = ref<Settings | null>(null)
  const busy = ref(false)
- const refreshing = ref(false)
- let activePage: PageId = 'overview'
- let currentRefresh: Promise<void> | null = null
- let queuedPage: PageId | null = null
+ const pageLoading = ref<Record<PageId, boolean>>({ overview: false, tasks: false, history: false, settings: false })
+ const refreshing = computed(() => pageLoading.value[activePage.value])
+ const subscriptionsLoaded = ref(false)
+ const taskGroupsLoaded = ref(false)
+ const requests = createRequestPool()
+ const pageRequests = createRequestPool()
+ let historyRevision = 0
+ const activePage = ref<PageId>('overview')
  /** 归档入口和任务表单共享当前目录状态，避免页面各自判断。 */
  const archiveMounted = computed(() => directories.value[2]?.mounted === 'mounted')
  const archiveAvailable = computed(() => archiveMounted.value && directories.value[2]?.writable)
@@ -54,49 +59,57 @@ export const useMediaStore = defineStore('media', () => {
   toast.add({ severity: 'error', summary: t('操作失败'), detail: t(error instanceof Error ? error.message : String(error)), life: 8000 })
  }
 
-/**
- * 每个页面仅读取自身展示所需的数据；串行化刷新以避免慢请求重叠。
- */
+/** 各资源返回后立即提交，慢接口不遮住已经可展示的页面内容。 */
+function loadSettings() {
+ return requests.run('settings', async () => {
+  const data = await api<Settings>('/settings')
+  settings.value = data
+  setLocale(data.ui.language)
+ })
+}
+function loadDirectories() {
+ return requests.run('directories', async () => { directories.value = await api<Directory[]>('/directories') })
+}
+function loadSubscriptions() {
+ return requests.run('subscriptions', async () => {
+  subscriptions.value = await api<Subscription[]>('/subscriptions')
+  subscriptionsLoaded.value = true
+ })
+}
+/** 分页立即响应点击；先前页的慢响应不能将当前页和记录回退。 */
+async function loadHistory() {
+ const revision = ++historyRevision
+ const sizeQuery = historyPageSizeSelected ? `&size=${historyPageSize.value}` : ''
+ const path = `/contents/page?page=${historyPage.value}${sizeQuery}`
+ const data = await requests.run(path, () => api<ContentHistoryPage>(path))
+ if (revision === historyRevision) applyHistoryPage(data)
+}
 async function loadPage(page: PageId) {
-  if (page === 'overview') {
+ let loads: Promise<unknown>[]
+ if (page === 'overview') {
+  loads = [requests.run('dashboard', async () => {
    const data = await api<Dashboard>('/dashboard')
    dashboard.value = data
    directories.value = data.directories
    setLocale(data.language)
-  } else if (page === 'tasks') {
-   const [nextSubscriptions, nextGroups, nextSettings, nextDirectories] = await Promise.all([
-    api<Subscription[]>('/subscriptions'), api<TaskGroup[]>('/task-groups'),
-    api<Settings>('/settings'), api<Directory[]>('/directories'),
-   ])
-   subscriptions.value = nextSubscriptions
-   taskGroups.value = nextGroups
-   settings.value = nextSettings
-   directories.value = nextDirectories
-   setLocale(nextSettings.ui.language)
-  } else if (page === 'history') {
-   if (!contentsLoaded.value) {
-    const [nextHistory, nextSubscriptions, nextSettings, nextDirectories] = await Promise.all([
-     api<ContentHistoryPage>(`/contents/page?page=${historyPage.value}`), api<Subscription[]>('/subscriptions'),
-     api<Settings>('/settings'), api<Directory[]>('/directories'),
-    ])
-    subscriptions.value = nextSubscriptions
-    settings.value = nextSettings
-    directories.value = nextDirectories
-    setLocale(nextSettings.ui.language)
-    applyHistoryPage(nextHistory)
-   } else {
-    const sizeQuery = historyPageSizeSelected ? `&size=${historyPageSize.value}` : ''
-    const nextHistory = await api<ContentHistoryPage>(`/contents/page?page=${historyPage.value}${sizeQuery}`)
-    applyHistoryPage(nextHistory)
-   }
-  } else {
-   const [nextSettings, nextDirectories] = await Promise.all([
-    api<Settings>('/settings'), api<Directory[]>('/directories'),
-   ])
-   settings.value = nextSettings
-   directories.value = nextDirectories
-   setLocale(nextSettings.ui.language)
-  }
+  })]
+ } else if (page === 'tasks') {
+  loads = [loadSubscriptions(), requests.run('task-groups', async () => {
+   taskGroups.value = await api<TaskGroup[]>('/task-groups')
+   taskGroupsLoaded.value = true
+  }), loadSettings(), loadDirectories()]
+ } else if (page === 'history') {
+  loads = [loadHistory()]
+  if (!subscriptionsLoaded.value) loads.push(loadSubscriptions())
+  if (!settings.value) loads.push(loadSettings())
+  if (!directories.value.length) loads.push(loadDirectories())
+ } else {
+  loads = [loadSettings(), loadDirectories()]
+ }
+ // 等待仅用于本页加载状态和错误收口，不控制组件挂载或其他页面的请求。
+ const results = await Promise.allSettled(loads)
+ const failure = results.find(result => result.status === 'rejected')
+ if (failure?.status === 'rejected') throw failure.reason
 }
 
 function applyHistoryPage(data: ContentHistoryPage) {
@@ -111,41 +124,22 @@ function setHistoryPagination(page: number, size: number) {
  historyPage.value = page
  historyPageSize.value = size
  historyPageSizeSelected = true
- void refresh('history').catch(reportError)
+ void loadHistory().catch(reportError)
 }
 
 function setActivePage(page: PageId) {
- activePage = page
+ activePage.value = page
  if (page !== 'history') historyPageSizeSelected = false
 }
 
-function refresh(page: PageId = activePage) {
- activePage = page
- if (currentRefresh) {
-  queuedPage = page
-  return currentRefresh
- }
- const run = async () => {
-  refreshing.value = true
-  let target = page
-  try {
-   while (true) {
-    queuedPage = null
-    try { await loadPage(target) }
-    catch (error) {
-     if (queuedPage === null) throw error
-    }
-    if (queuedPage === null) break
-    target = queuedPage
-   }
-  } finally {
-   refreshing.value = false
-   currentRefresh = null
-  }
- }
- currentRefresh = run()
- return currentRefresh
- }
+/** 页面之间并行，同一页轮询复用进行中的请求，导航无需等待旧页。 */
+function refresh(page: PageId = activePage.value) {
+ return pageRequests.run(page, async () => {
+  pageLoading.value[page] = true
+  try { await loadPage(page) }
+  finally { pageLoading.value[page] = false }
+ })
+}
 
  /**
  * 等待状态只覆盖写请求；成功提示与页面刷新解耦，避免慢查询阻塞操作确认。
@@ -161,5 +155,5 @@ function refresh(page: PageId = activePage) {
   catch (e) { reportError(e); return false }
   finally { busy.value = false }
  }
- return { dashboard, subscriptions, taskGroups, contents, contentsLoaded, historyTotal, historyPage, historyPageSize, directories, settings, busy, refreshing, archiveMounted, archiveAvailable, subscriptionName, reportError, setActivePage, setHistoryPagination, refresh, mutate }
+ return { dashboard, subscriptions, taskGroups, contents, contentsLoaded, historyTotal, historyPage, historyPageSize, directories, settings, busy, refreshing, pageLoading, subscriptionsLoaded, taskGroupsLoaded, archiveMounted, archiveAvailable, subscriptionName, reportError, setActivePage, setHistoryPagination, refresh, mutate }
 })
