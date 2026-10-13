@@ -135,6 +135,14 @@ func (a *App) placeFiles(s domain.Subscription, c *domain.Content, dir string) e
 // 文件列表可能同时包含已归档和未归档的路径。
 // 重试时跳过已经离开下载根目录的记录。
 func (a *App) archive(c *domain.Content) error {
+	// 头像由作者共享，但归档只随实际媒体记录触发，不扫描整个 data 目录。
+	sub, err := a.Repo.Subscription(c.SubscriptionID)
+	if err != nil {
+		return err
+	}
+	if err = a.archiveAvatar(sub); err != nil {
+		return fmt.Errorf("头像归档失败：%w", err)
+	}
 	for i, src := range c.Paths {
 		rel, e := filepath.Rel(a.Config.DownloadDir, src)
 		if e != nil {

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -116,8 +117,13 @@ func (a *App) ClearLogs() (int, error) {
 			continue
 		}
 		path := filepath.Join(a.Config.LogDir, entry.Name())
-		if a.openLogs[path] > 0 {
-			err = os.Truncate(path, 0)
+		if writer := a.loggers[path]; writer != nil {
+			if err = writer.buffer.Flush(); err == nil {
+				err = os.Truncate(path, 0)
+			}
+			if err == nil {
+				_, err = writer.file.Seek(0, io.SeekStart)
+			}
 		} else {
 			err = os.Remove(path)
 		}

@@ -27,20 +27,24 @@ printf '%s' "$AVATAR_BODY" > "$destination/avatar.jpg"
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
 	cli := CLI{DataDir: root}
+	downloads := filepath.Join(root, "downloads")
 	sub := domain.Subscription{Platform: "instagram", StableID: "123", CurrentName: "alice"}
 	log := func(string) {}
 	t.Setenv("AVATAR_BODY", "first")
-	if err := cli.UpdateAvatar(context.Background(), sub, log); err != nil {
+	if err := cli.UpdateAvatar(context.Background(), sub, AvatarPath(downloads, sub), log); err != nil {
 		t.Fatal(err)
 	}
-	path := AvatarPath(root, sub)
+	path := AvatarPath(downloads, sub)
+	if _, err := os.Stat(AvatarPath(cli.DataDir, sub)); !os.IsNotExist(err) {
+		t.Fatal("头像写入了 data 目录", err)
+	}
 	stamp := time.Unix(1000, 0)
 	if err := os.Chtimes(path, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	sub.CurrentName = "renamed"
 	t.Setenv("AVATAR_BODY", "other")
-	if err := cli.UpdateAvatar(context.Background(), sub, log); err != nil {
+	if err := cli.UpdateAvatar(context.Background(), sub, AvatarPath(downloads, sub), log); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
@@ -49,7 +53,7 @@ printf '%s' "$AVATAR_BODY" > "$destination/avatar.jpg"
 		t.Fatal("同大小头像覆盖了原文件")
 	}
 	t.Setenv("AVATAR_BODY", "different size")
-	if err := cli.UpdateAvatar(context.Background(), sub, log); err != nil {
+	if err := cli.UpdateAvatar(context.Background(), sub, AvatarPath(downloads, sub), log); err != nil {
 		t.Fatal(err)
 	}
 	data, _ = os.ReadFile(path)
@@ -57,7 +61,7 @@ printf '%s' "$AVATAR_BODY" > "$destination/avatar.jpg"
 		t.Fatal("大小变化未替换头像")
 	}
 	t.Setenv("AVATAR_FAILURE", "1")
-	if err := cli.UpdateAvatar(context.Background(), sub, log); err == nil {
+	if err := cli.UpdateAvatar(context.Background(), sub, AvatarPath(downloads, sub), log); err == nil {
 		t.Fatal("头像下载失败没有返回错误")
 	}
 	data, _ = os.ReadFile(path)

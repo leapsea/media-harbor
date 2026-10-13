@@ -72,6 +72,16 @@ func addSub(t *testing.T, a *App, name, platform string) domain.Subscription {
 	return s
 }
 
+// taskLogPathForTest resolves the shared subscription log used by tasks created during a test.
+func taskLogPathForTest(t *testing.T, a *App, task domain.Task) string {
+	t.Helper()
+	sub, err := a.Repo.Subscription(task.SubscriptionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a.LogPath(sub, time.Now())
+}
+
 // TestScanDownloadArchive 覆盖扫描、增量去重、稳定目录和恢复归档。
 func TestScanDownloadArchive(t *testing.T) {
 	// 使用真实数据库，核心流程无需模拟持久化语义。

@@ -102,7 +102,7 @@ func TestCatchupReconcilesDownloads(t *testing.T) {
 			}
 		}
 	}
-	raw, _ := os.ReadFile(a.LogPath(scan))
+	raw, _ := os.ReadFile(taskLogPathForTest(t, a, scan))
 	want := "补全下载发现 15 项；新增下载 10 项；重新排队 2 项；已完成跳过 1 项；处理中跳过 2 项"
 	if !strings.Contains(string(raw), want) {
 		t.Fatalf("log=%s", raw)
@@ -142,7 +142,7 @@ func TestCatchupLimited(t *testing.T) {
 	if len(contents) != 10 {
 		t.Fatalf("limited content=%d", len(contents))
 	}
-	raw, _ := os.ReadFile(a.LogPath(task))
+	raw, _ := os.ReadFile(taskLogPathForTest(t, a, task))
 	if !strings.Contains(string(raw), "补全下载发现 10 项") {
 		t.Fatalf("log=%s", raw)
 	}

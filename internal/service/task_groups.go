@@ -1,16 +1,10 @@
 package service
 
 import (
-	"fmt"
 	"media-harbor/internal/domain"
 	"sort"
-	"strings"
 	"time"
-	"unicode"
 )
-
-// taskLabels 用于订阅日志，界面无需将内部状态代码解释给用户。
-var taskLabels = map[string]string{"resolve": "内容解析", "catchup": "补全下载", "full": "全量扫描", "scan": "增量扫描", "download": "下载", "queued": "待执行", "running": "运行中", "completed": "已完成", "failed": "失败", "cancelled": "已取消", "skipped": "已跳过"}
 
 // TaskGroup 将一个订阅的扫描和下载状态收口为一行，底层任务仍独立持久化。
 // 下载统计与扫描状态分开，避免扫描成功被误认为下载完成。
@@ -129,121 +123,11 @@ func (a *App) GroupAction(subscriptionID int64, action string) (int, error) {
 	return count, nil
 }
 
-// GroupLog 将当前扫描和下载日志汇总，显示任务标识和现有状态。
-// 每个文件由任务执行器追加，聚合读取不会改写历史日志。
+// GroupLog 直接读取该订阅按日期划分的共享日志，不再遍历任务或逐个打开文件。
 func (a *App) GroupLog(subscriptionID int64) (string, error) {
-	settings, err := a.Repo.Settings()
-	if err != nil {
-		return "", err
-	}
 	sub, err := a.Repo.Subscription(subscriptionID)
 	if err != nil {
 		return "", err
 	}
-	tasks, err := a.Repo.Tasks()
-	if err != nil {
-		return "", err
-	}
-	selected := selectedTasks(tasks, subscriptionID, settings.Debug.TestItemLimit)
-	var result strings.Builder
-	fmt.Fprintf(&result, "任务：%s · 平台：%s\n地址：%s\n", sub.DisplayName, sub.Platform, sub.URL)
-	if settings.Debug.TestItemLimit > 0 {
-		fmt.Fprintf(&result, "测试模式：只处理前 %d 个媒体条目，其余历史记录保留\n", settings.Debug.TestItemLimit)
-	}
-	// 扫描放在前面，使用户打开日志时先看到发现结果。
-	sort.SliceStable(selected, func(i, j int) bool {
-		if (selected[i].ContentID == 0) != (selected[j].ContentID == 0) {
-			return selected[i].ContentID == 0
-		}
-		return selected[i].ID < selected[j].ID
-	})
-	for _, t := range selected {
-		fmt.Fprintf(&result, "\n—— 任务 #%d · %s · %s · 第 %d 次 ——\n", t.ID, taskLabels[t.Kind], taskLabels[t.Status], t.Attempts)
-		if t.ContentID != 0 {
-			if content, err := a.Repo.Content(t.ContentID); err == nil {
-				fmt.Fprintf(&result, "%s · %s\n", content.RemoteID, content.Title)
-			}
-		}
-		raw, e := a.taskLog(t)
-		if e != nil {
-			return "", e
-		}
-		result.WriteString(conciseTaskLog(raw))
-	}
-	return result.String(), nil
-}
-
-// conciseTaskLog 只展示最近一次执行的业务阶段和异常，完整日志文件保持原样。
-// 文件地址、播放器请求、分片百分比属于引擎诊断；字节进度由详情面板独立呈现。
-func conciseTaskLog(raw string) string {
-	lines := strings.Split(strings.TrimSpace(raw), "\n")
-	start := 0
-	for i, line := range lines {
-		if strings.Contains(line, "开始 ") && strings.Contains(line, " 任务 #") {
-			start = i
-		}
-	}
-	var result strings.Builder
-	warnings := map[string]bool{}
-	latestDiscovery, latestWait := -1, -1
-	finishedScan := false
-	for i, line := range lines[start:] {
-		if strings.Contains(line, "发现媒体 ") {
-			latestDiscovery = i
-		}
-		if strings.Contains(line, "正在枚举媒体，") {
-			latestWait = i
-		}
-		if strings.Contains(line, "扫描发现 ") {
-			finishedScan = true
-		}
-	}
-	for i, line := range lines[start:] {
-		message := line
-		stamp := ""
-		if strings.HasPrefix(line, "[") {
-			if end := strings.Index(line, "] "); end >= 0 {
-				message = line[end+2:]
-				stamp = line[:end+2]
-			}
-		}
-		if strings.HasPrefix(message, "发现媒体 ") && (finishedScan || i != latestDiscovery) {
-			continue
-		}
-		if strings.HasPrefix(message, "正在枚举媒体，") && i != latestWait {
-			continue
-		}
-		lower := strings.ToLower(message)
-		if strings.Contains(lower, "warning") {
-			if warnings[message] {
-				continue
-			}
-			warnings[message] = true
-		}
-		if strings.Contains(lower, "warning") || strings.Contains(lower, "error") || strings.Contains(message, "失败") {
-			result.WriteString(line + "\n")
-			continue
-		}
-		noise := false
-		for _, prefix := range []string{"[", "frame=", "size=", "Deleting original file ", "任务：", "测试模式：", "平台标题语言：", "媒体地址：", "下载工作目录：", "读取下载元数据；", "主任务已开始处理；"} {
-			if strings.HasPrefix(message, prefix) {
-				noise = true
-				break
-			}
-		}
-		if noise || strings.TrimSpace(message) == "" {
-			continue
-		}
-		if strings.HasPrefix(message, "下载完成；保存文件：") {
-			files := strings.Split(strings.TrimPrefix(message, "下载完成；保存文件："), "，")
-			line = stamp + fmt.Sprintf("下载完成；保存 %d 个文件", len(files))
-		}
-		if strings.HasPrefix(message, "主任务：复用已下载视频：") {
-			line = stamp + "主任务：复用已下载视频"
-		}
-		if strings.ContainsFunc(message, func(r rune) bool { return unicode.Is(unicode.Han, r) }) {
-			result.WriteString(line + "\n")
-		}
-	}
-	return result.String()
+	return a.readSubscriptionLogs(sub)
 }

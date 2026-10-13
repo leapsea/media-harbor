@@ -183,9 +183,9 @@ type NameResolver interface {
 	ResolveName(context.Context, Subscription) (string, error)
 }
 
-// AvatarDownloader 是可选的作者头像能力，不把头像加入媒体下载队列。
+// AvatarDownloader 是媒体下载任务的可选附属能力，保存位置由应用服务指定。
 type AvatarDownloader interface {
-	UpdateAvatar(context.Context, Subscription, func(string)) error
+	UpdateAvatar(context.Context, Subscription, string, func(string)) error
 }
 
 // DryRunner 验证未保存配置的远端请求，不修改任务、产物或日志文件。

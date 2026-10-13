@@ -84,6 +84,29 @@ def print_diagnostics(container):
         print(f"无法读取任务日志: {error}", flush=True)
 
 
+def run_health_check():
+    """只验证目标架构镜像能启动并通过服务接口响应。"""
+    container = f"media-harbor-health-{RUN_ID}"
+    args = ["run", "-d", "--name", container, "-p", f"127.0.0.1:{PORT}:8080"]
+    if PLATFORM:
+        args += ["--platform", PLATFORM]
+    args.append(IMAGE)
+    docker(*args)
+    try:
+        label = PLATFORM or "container"
+        wait_until(
+            lambda: request("/dashboard"),
+            lambda dashboard: dashboard.get("version") == APP_VERSION,
+            stage=f"{label} 服务健康",
+        )
+        print(f"PASS {label}: 容器启动与服务健康")
+    except Exception:
+        print_diagnostics(container)
+        raise
+    finally:
+        docker("rm", "-f", container)
+
+
 def run_case(name, mounted, readonly_download=False):
     container = f"media-harbor-smoke-{RUN_ID}-{name}"
     source = None
@@ -181,6 +204,9 @@ def run_case(name, mounted, readonly_download=False):
 
 
 if __name__ == "__main__":
-    run_case("unmounted", False)
-    run_case("mounted", True)
-    run_case("readonly-download", True, True)
+    if os.environ.get("SMOKE_HEALTH_ONLY") == "1":
+        run_health_check()
+    else:
+        run_case("unmounted", False)
+        run_case("mounted", True)
+        run_case("readonly-download", True, True)

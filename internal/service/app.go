@@ -25,7 +25,8 @@ type App struct {
 	Engine      domain.Engine
 	mu          sync.Mutex
 	logMu       sync.Mutex
-	openLogs    map[string]int
+	avatarMu    sync.Mutex // 头像更新与移动归档共用锁，避免并发产生两个副本。
+	loggers     map[string]*subscriptionLogWriter
 	active      map[int64]context.CancelFunc
 	wake        chan struct{}
 	directories []DirectoryStatus
@@ -36,7 +37,7 @@ type App struct {
 // Repository 与 Engine 的实现仅在主程序中选择。
 // 构造时的目录快照会在 Dashboard 展示。
 func New(c config.Config, r domain.Repository, e domain.Engine) *App {
-	return &App{Config: c, Repo: r, Engine: e, active: map[int64]context.CancelFunc{}, openLogs: map[string]int{}, wake: make(chan struct{}, 1), directories: DetectDirectories(c)}
+	return &App{Config: c, Repo: r, Engine: e, active: map[int64]context.CancelFunc{}, loggers: map[string]*subscriptionLogWriter{}, wake: make(chan struct{}, 1), directories: DetectDirectories(c)}
 }
 
 // NextRun 支持 @every 6h、@daily 和标准五字段 Cron。
@@ -343,8 +344,10 @@ func (a *App) runScheduler(ctx context.Context, ticks <-chan time.Time) {
 			}
 			a.mu.Unlock()
 			a.wg.Wait()
+			a.closeLogs()
 			return
 		case <-ticks:
+			a.flushLogs()
 			a.wakeScheduler()
 		case <-a.wake:
 			if ctx.Err() != nil {
@@ -492,59 +495,38 @@ func (a *App) tick(ctx context.Context) error {
 }
 
 // execute 的耗时引擎调用在锁外运行，最终领域状态在锁内提交。
-// 引擎输出独立写入任务日志，JSON 扫描结果直接转换为内容。
+// 引擎输出写入订阅日期日志，JSON 扫描结果直接转换为内容。
 // 任务被删除或取消后，后台结果不会再次提交为完成。
 func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription, settings domain.Settings) {
 	s.RequestLanguage = settings.UI.Language
-	path := a.LogPath(t)
-	// 新库复用任务编号时，新任务首次执行不能混入旧库日志；重试继续追加。
-	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
-	if t.Attempts <= 1 {
-		flags = os.O_CREATE | os.O_WRONLY | os.O_TRUNC
-	}
-	a.logMu.Lock()
-	f, e := os.OpenFile(path, flags, 0644)
-	if e == nil {
-		a.openLogs[path]++
-	}
-	a.logMu.Unlock()
+	logStarted := time.Now()
+	writer, e := a.beginTaskLog(s, logStarted)
 	if e != nil {
 		a.finish(t, e)
 		return
 	}
-	defer func() {
-		a.logMu.Lock()
-		defer a.logMu.Unlock()
-		f.Close()
-		a.openLogs[path]--
-		if a.openLogs[path] == 0 {
-			delete(a.openLogs, path)
-		}
-	}()
+	defer a.endTaskLog(s, logStarted, writer)
 	log := func(msg string) {
 		if a.recordProgress(t.ID, msg) {
 			return
 		}
-		a.logMu.Lock()
-		defer a.logMu.Unlock()
-		for _, line := range strings.Split(strings.TrimSpace(msg), "\n") {
-			_, _ = fmt.Fprint(f, taskLogLine(time.Now(), line))
-		}
+		a.writeTaskLog(writer, t, msg)
 	}
 	started := time.Now()
-	log(fmt.Sprintf("开始 %s 任务 #%d；第 %d 次执行", t.Kind, t.ID, t.Attempts))
-	// Cookie 按执行时的平台配置自动加载，日志只记录存在状态。
-	_, cookieErr := os.Stat(filepath.Join(a.Config.DataDir, "cookies", s.Platform+".txt"))
-	log(fmt.Sprintf("任务：%s；平台：%s；Cookie：%t；地址：%s", s.DisplayName, s.Platform, cookieErr == nil, s.URL))
+	if t.ContentID == 0 {
+		log("开始解析订阅内容")
+	} else {
+		log("开始处理媒体任务")
+	}
+	if t.ContentID == 0 {
+		log("解析订阅地址：" + s.URL)
+	}
 	defer func() {
-		log(fmt.Sprintf("本次执行结束，耗时 %s", time.Since(started).Round(time.Millisecond)))
+		log(fmt.Sprintf("执行结束；耗时 %s", time.Since(started).Round(time.Millisecond)))
 	}()
 	if t.ContentID == 0 {
 		if t.Kind == "catchup" {
 			log("补全下载：复用已有媒体文件，补齐缺项并刷新元数据与所选评论")
-		}
-		if settings.Debug.TestItemLimit > 0 {
-			log(fmt.Sprintf("测试模式：仅获取前 %d 个媒体条目，不扫描完整历史", settings.Debug.TestItemLimit))
 		}
 		// 等待期间定期报告耗时，不输出 Cookie 或引擎 JSON 原文。
 		progressDone, progressStopped := make(chan struct{}), make(chan struct{})
@@ -605,24 +587,11 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 				pending += w
 				skipped += v
 				discovered++
-				log(fmt.Sprintf("发现媒体 %s；轮播序号 %d；发布日期 %s；累计发现 %d 项；新增 %d 项；重新排队 %d 项；重复跳过 %d 项", item.RemoteID, item.Asset, publicationLabel(item.Published), discovered, added, retried, skipped+completed+pending))
+				log(fmt.Sprintf("解析帖子 %s · %s；资源序号 %d；发布日期 %s；累计资源 %d 项；新增 %d 项；已存在 %d 项", item.RemoteID, item.Title, item.Asset, publicationLabel(item.Published), discovered, added, skipped+completed+pending))
 			}
 			return nil
 		}
 		result, scanErr := a.streamScan(ctx, s, settings.Debug.TestItemLimit, t.Kind == "catchup", log, consume)
-		// 头像单独下载，不计入媒体条目上限，也不让头像失败撤销扫描成果。
-		if downloader, ok := a.Engine.(domain.AvatarDownloader); ok && s.Platform == "instagram" && ctx.Err() == nil {
-			author := s
-			if result.StableID != "" {
-				author.StableID = result.StableID
-			}
-			if result.CurrentName != "" {
-				author.CurrentName = result.CurrentName
-			}
-			if err := downloader.UpdateAvatar(ctx, author, log); err != nil {
-				log(fmt.Sprintf("头像阶段：博主 %s；错误：%v", author.CurrentName, err))
-			}
-		}
 		close(progressDone)
 		<-progressStopped
 		log(fmt.Sprintf("账号识别：稳定 ID=%s；当前名称=%s", result.StableID, result.CurrentName))
@@ -699,11 +668,14 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 		options = *s.YouTube
 	}
 	dir := a.WorkPath(t)
-	log(fmt.Sprintf("开始下载：媒体 %s；轮播序号 %d；发布日期 %s", c.RemoteID, c.Asset, publicationLabel(c.Published)))
-	log("媒体地址：" + c.URL)
-	// 工作目录与最终保存位置分别记录，便于查找尚未成功的文件。
-	log("下载工作目录：" + dir)
+	log(fmt.Sprintf("开始下载帖子：%s · %s；资源序号 %d；发布日期 %s", c.RemoteID, c.Title, c.Asset, publicationLabel(c.Published)))
+	log("请求资源地址：" + c.URL)
 	e = a.Engine.Download(ctx, s, c, options, dir, log)
+	// 只有媒体下载成功才获取头像；单纯扫描与空队列不会留下头像文件。
+	if e == nil && ctx.Err() == nil {
+		// 头像输出仅写日志，不更新媒体进度，归档持锁等待时不会反向申请任务锁。
+		a.updateDownloadAvatar(ctx, s, func(msg string) { a.writeTaskLog(writer, t, msg) })
+	}
 	downloadErr := e
 	// 以当前语言的下载元数据刷新标题，已存在的媒体文件也无需重新下载。
 	if s.Platform == "youtube" {

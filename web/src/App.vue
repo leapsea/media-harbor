@@ -19,9 +19,11 @@ const { page } = useHashNavigation()
 const editing = ref(false)
 const selected = ref<Subscription | null>(null)
 const log = ref<string | null>(null)
+const logLoading = ref(false)
 const logSubscription = ref(0)
 const logArea = ref<HTMLTextAreaElement | null>(null)
 const loadedPage = ref<string | null>(null)
+let logRequestId = 0
 let polling: ReturnType<typeof setInterval> | undefined
 let refreshError = ''
 const pages = [{ id: 'overview', label: '总览', icon: '◈' }, { id: 'tasks', label: '任务管理', icon: '≡' }, { id: 'history', label: '下载历史', icon: '◷' }, { id: 'settings', label: '系统设置', icon: '⚙' }] as const
@@ -41,9 +43,18 @@ function edit(subscription: Subscription | null) { selected.value = subscription
 async function showLog(id: number) {
  const opening = log.value === null
  logSubscription.value = id
- try { log.value = (await api<{ log: string }>(`/subscriptions/${id}/log`)).log; if (opening) { await nextTick(); logArea.value?.focus() } }
- catch (e) { store.reportError(e) }
+ const requestId = ++logRequestId
+ if (opening) { log.value = ''; logLoading.value = true }
+ const pending = api<{ log: string }>(`/subscriptions/${id}/log`)
+ if (opening) { await nextTick(); logArea.value?.focus() }
+ try {
+  const result = await pending
+  if (requestId === logRequestId && log.value !== null) log.value = result.log
+ }
+ catch (e) { if (requestId === logRequestId && log.value !== null) store.reportError(e) }
+ finally { if (requestId === logRequestId && opening) logLoading.value = false }
 }
+function closeLog() { logRequestId++; logLoading.value = false; log.value = null }
 
 /** 日志弹窗内全选只作用于只读文本框，支持 Control 和 Command。 */
 function selectLog(event: KeyboardEvent) {
@@ -80,7 +91,7 @@ onMounted(async () => {
  polling = setInterval(async () => {
   if (store.busy || store.refreshing) return
   await refreshCurrentPage()
-  if (log.value !== null) await showLog(logSubscription.value)
+  if (log.value !== null && !logLoading.value) await showLog(logSubscription.value)
  }, 4000)
 })
 onUnmounted(() => { if (polling) clearInterval(polling) })
@@ -120,6 +131,6 @@ onUnmounted(() => { if (polling) clearInterval(polling) })
    <SystemSettings v-if="page === 'settings' && loadedPage === 'settings' && store.settings" :settings="store.settings" />
   </main>
   <SubscriptionEditor v-if="editing && store.settings" :subscription="selected" :settings="store.settings" :archive-available="Boolean(store.archiveAvailable)" @close="editing = false" />
-  <div v-if="log !== null" class="modal-backdrop"><section class="modal log-modal" @keydown.capture="selectLog" role="dialog" aria-modal="true" aria-labelledby="log-title"><div class="section-top"><h2 id="log-title">{{ t('{name} · 任务日志', { name: store.subscriptionName(logSubscription) }) }}</h2><button class="icon-button" :aria-label="t('关闭日志')" @click="log = null">×</button></div><textarea ref="logArea" class="log-content" :aria-label="t('任务日志内容')" :value="log" readonly spellcheck="false"></textarea></section></div>
+  <div v-if="log !== null" class="modal-backdrop"><section class="modal log-modal" @keydown.capture="selectLog" role="dialog" aria-modal="true" aria-labelledby="log-title"><div class="section-top"><h2 id="log-title">{{ t('{name} · 任务日志', { name: store.subscriptionName(logSubscription) }) }}</h2><button class="icon-button" :aria-label="t('关闭日志')" @click="closeLog">×</button></div><textarea ref="logArea" class="log-content" :aria-label="t('任务日志内容')" :value="logLoading ? t('加载中') : log" readonly spellcheck="false"></textarea></section></div>
  </div>
 </template>

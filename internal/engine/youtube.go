@@ -77,7 +77,7 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 			if ctx.Err() != nil || !strings.Contains(err.Error(), "HTTP Error 403") || attempt == config.YouTubeMediaAttempts {
 				return youtubeDownloadError(stage, err)
 			}
-			log(fmt.Sprintf("%s：媒体请求 403；重新解析地址后进行第 %d 次尝试", stage, attempt+1))
+			log(fmt.Sprintf("%s：媒体请求 403；重新解析资源地址后重试", stage))
 			fresh, resolveErr := run(ctx, "yt-dlp", append(append([]string{}, metadataArgs...), "--", item.URL), log, true)
 			if resolveErr != nil {
 				return resolveErr

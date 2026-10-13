@@ -57,7 +57,7 @@ func TestClearLogsWhileDownloading(t *testing.T) {
 	if err != nil || n != 2 {
 		t.Fatal(n, err)
 	}
-	raw, err := os.ReadFile(a.LogPath(task))
+	raw, err := os.ReadFile(taskLogPathForTest(t, a, task))
 	if err != nil || len(raw) != 0 {
 		t.Fatal(string(raw), err)
 	}
@@ -67,7 +67,7 @@ func TestClearLogsWhileDownloading(t *testing.T) {
 	}
 	close(e.resume)
 	a.wg.Wait()
-	raw, err = os.ReadFile(a.LogPath(task))
+	raw, err = os.ReadFile(taskLogPathForTest(t, a, task))
 	if err != nil || strings.Contains(string(raw), "before-clear") || !strings.Contains(string(raw), "after-clear") {
 		t.Fatal(string(raw), err)
 	}

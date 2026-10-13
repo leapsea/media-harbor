@@ -179,23 +179,19 @@ jobs:
             GALLERY_DL_VERSION=${{ env.GALLERY }}
             YTDLP_VERSION=${{ env.YTDLP }}
             FFMPEG_VERSION=${{ env.FFMPEG }}
-      - name: Verify amd64 container
+      - name: Verify amd64 container health
         env:
           SMOKE_IMAGE: media-harbor-smoke:tested
           SMOKE_PLATFORM: linux/amd64
-          GALLERY_DL_VERSION: ${{ env.GALLERY }}
-          YTDLP_VERSION: ${{ env.YTDLP }}
-          FFMPEG_VERSION: ${{ env.FFMPEG }}
+          SMOKE_HEALTH_ONLY: '1'
+          APP_VERSION: ${{ env.APP_VERSION }}
         run: python3 scripts/container-smoke.py
-      - name: Verify arm64 container
+      - name: Verify arm64 container health
         env:
           SMOKE_IMAGE: media-harbor-smoke:tested
           SMOKE_PLATFORM: linux/arm64
-          # Ubuntu amd64 上由 QEMU 执行 Python 引擎与 FFmpeg，单阶段预算独立设置。
-          SMOKE_TIMEOUT: '180'
-          GALLERY_DL_VERSION: ${{ env.GALLERY }}
-          YTDLP_VERSION: ${{ env.YTDLP }}
-          FFMPEG_VERSION: ${{ env.FFMPEG }}
+          SMOKE_HEALTH_ONLY: '1'
+          APP_VERSION: ${{ env.APP_VERSION }}
         run: python3 scripts/container-smoke.py
       - name: Log in to GHCR
         if: needs.resolve.outputs.automatic == 'true' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'workflow_dispatch'

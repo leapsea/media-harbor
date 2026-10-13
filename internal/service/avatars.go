@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"media-harbor/internal/domain"
 	"media-harbor/internal/engine"
@@ -22,7 +23,12 @@ func (a *App) SubscriptionViews() ([]SubscriptionView, error) {
 	views := make([]SubscriptionView, 0, len(subs))
 	for _, sub := range subs {
 		view := SubscriptionView{Subscription: sub}
-		if info, err := os.Stat(engine.AvatarPath(a.Config.DataDir, sub)); err == nil {
+		if path, err := a.avatarFile(sub); err == nil {
+			info, err := os.Stat(path)
+			if err != nil {
+				views = append(views, view)
+				continue
+			}
 			view.AvatarURL = fmt.Sprintf("/api/subscriptions/%d/avatar?v=%d", sub.ID, info.Size())
 		}
 		views = append(views, view)
@@ -36,10 +42,58 @@ func (a *App) AvatarFile(id int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	path := engine.AvatarPath(a.Config.DataDir, sub)
-	if path == "" {
-		return "", os.ErrNotExist
+	return a.avatarFile(sub)
+}
+
+// avatarFile 只查找下载与归档根目录，不读取或迁移 data 中的旧头像。
+func (a *App) avatarFile(sub domain.Subscription) (string, error) {
+	for _, root := range []string{a.Config.DownloadDir, a.Config.ArchiveDir} {
+		path := engine.AvatarPath(root, sub)
+		if path != "" {
+			if _, err := os.Stat(path); err == nil {
+				return path, nil
+			} else if !os.IsNotExist(err) {
+				return "", err
+			}
+		}
 	}
-	_, err = os.Stat(path)
-	return path, err
+	return "", os.ErrNotExist
+}
+
+// updateDownloadAvatar 在媒体成功后更新共享头像，失败只记录到所属下载任务。
+// 已归档头像在原位置更新，同大小不覆盖，不额外复制一份到下载目录。
+func (a *App) updateDownloadAvatar(ctx context.Context, sub domain.Subscription, log func(string)) {
+	downloader, ok := a.Engine.(domain.AvatarDownloader)
+	if !ok || sub.Platform != "instagram" || sub.StableID == "" {
+		return
+	}
+	a.avatarMu.Lock()
+	defer a.avatarMu.Unlock()
+	path, err := a.avatarFile(sub)
+	if os.IsNotExist(err) {
+		path = engine.AvatarPath(a.Config.DownloadDir, sub)
+	} else if err != nil {
+		log(fmt.Sprintf("头像阶段：博主 %s；读取失败：%v", sub.CurrentName, err))
+		return
+	}
+	if err = downloader.UpdateAvatar(ctx, sub, path, log); err != nil {
+		log(fmt.Sprintf("头像阶段：博主 %s；错误：%v", sub.CurrentName, err))
+	}
+}
+
+// archiveAvatar 与媒体归档共用移动策略；没有头像的任务无需创建空文件。
+// 归档卷恢复后，原有待归档媒体会再次触发这一阶段。
+func (a *App) archiveAvatar(sub domain.Subscription) error {
+	a.avatarMu.Lock()
+	defer a.avatarMu.Unlock()
+	src := engine.AvatarPath(a.Config.DownloadDir, sub)
+	if src == "" {
+		return nil
+	}
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return moveFile(src, engine.AvatarPath(a.Config.ArchiveDir, sub))
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"media-harbor/internal/domain"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -82,7 +83,7 @@ func TestDetailRunsOnlyOnce(t *testing.T) {
 	}
 }
 
-// TestFreshTaskLog 新库首次执行覆盖旧编号的日志，避免显示其他任务历史。
+// TestFreshTaskLog 新任务只读取新的订阅日志文件，不读取旧式任务日志。
 func TestFreshTaskLog(t *testing.T) {
 	app := testApp(t, fakeEngine{})
 	sub := addSub(t, app, "author", "youtube")
@@ -90,15 +91,16 @@ func TestFreshTaskLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(app.LogPath(task), []byte("旧库日志"), 0644); err != nil {
+	legacyPath := filepath.Join(app.Config.LogDir, taskKey(task)+".log")
+	if err = os.WriteFile(legacyPath, []byte("旧式任务日志"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err = app.tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	app.wg.Wait()
-	raw, err := os.ReadFile(app.LogPath(task))
-	if err != nil || strings.Contains(string(raw), "旧库日志") {
+	raw, err := app.GroupLog(sub.ID)
+	if err != nil || strings.Contains(raw, "旧式任务日志") || !strings.Contains(raw, "开始解析订阅内容") {
 		t.Fatalf("%s %v", raw, err)
 	}
 }
@@ -135,7 +137,7 @@ func TestProfileScanAfterContent(t *testing.T) {
 	}
 }
 
-// TestUnstartedTaskLog 未启动与取消的任务不能展示旧库同编号的登录错误。
+// TestUnstartedTaskLog 未启动与取消的任务没有运行日志，旧式文件不会被读取。
 func TestUnstartedTaskLog(t *testing.T) {
 	app := testApp(t, fakeEngine{})
 	sub := addSub(t, app, "author", "instagram")
@@ -143,7 +145,7 @@ func TestUnstartedTaskLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(app.LogPath(task), []byte("HTTP redirect to login page"), 0644); err != nil {
+	if err = os.WriteFile(filepath.Join(app.Config.LogDir, taskKey(task)+".log"), []byte("HTTP redirect to login page"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	for _, cancelled := range []bool{false, true} {
@@ -160,36 +162,60 @@ func TestUnstartedTaskLog(t *testing.T) {
 		if err != nil || strings.Contains(raw, "redirect") {
 			t.Fatalf("group=%s err=%v", raw, err)
 		}
-		if cancelled && !strings.Contains(raw, "未开始执行，已取消") {
+		if raw != "" {
 			t.Fatal(raw)
 		}
 	}
 }
 
-// TestTaskLogIdentity 创建时间不同的同编号任务必须隔离日志，重试身份保持不变。
+// TestTaskLogIdentity 验证同一订阅共用单个日期日志，任务接口仍可按任务标识筛选。
 func TestTaskLogIdentity(t *testing.T) {
 	app := testApp(t, fakeEngine{})
-	old := domain.Task{ID: 63, CreatedAt: time.Date(2026, 10, 11, 15, 57, 48, 123, time.UTC), Attempts: 1, Status: "failed"}
-	current := old
-	current.CreatedAt = current.CreatedAt.Add(24 * time.Hour)
-	current.Status = "running"
-	if app.LogPath(old) == app.LogPath(current) {
-		t.Fatal("同编号任务日志路径重叠")
+	sub := addSub(t, app, "author name", "youtube")
+	for _, remoteID := range []string{"post-a", "post-b"} {
+		if err := app.Repo.AddContentAndTask(sub.ID, domain.Content{RemoteID: remoteID}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.WriteFile(app.LogPath(old), []byte(taskLogLine(old.CreatedAt, "旧登录错误")), 0644); err != nil {
-		t.Fatal(err)
+	tasks, err := app.Repo.Tasks()
+	if err != nil || len(tasks) != 2 {
+		t.Fatal(tasks, err)
 	}
-	raw, err := app.taskLog(current)
-	if err != nil || strings.Contains(raw, "旧登录错误") {
-		t.Fatalf("raw=%s err=%v", raw, err)
+	first, second := tasks[0], tasks[1]
+	base := time.Date(2026, 10, 13, 12, 0, 0, 0, time.Local)
+	if app.LogPath(sub, base) != app.LogPath(sub, base.Add(time.Hour)) {
+		t.Fatal("同一天同一订阅应复用日志路径")
 	}
-	retry := current
-	retry.Attempts++
-	if app.LogPath(retry) != app.LogPath(current) {
-		t.Fatal("重试更换了日志身份")
+	if app.LogPath(sub, base) == app.LogPath(sub, base.Add(24*time.Hour)) {
+		t.Fatal("不同日期应使用不同日志路径")
 	}
-	line := taskLogLine(current.CreatedAt, "事件")
-	if !strings.Contains(line, current.CreatedAt.Local().Format("2006-01-02 15:04:05")) {
-		t.Fatal(line)
+	for _, entry := range []struct {
+		task    domain.Task
+		message string
+	}{{first, "请求资源 A 成功"}, {second, "请求资源 B 失败"}} {
+		if err := app.writeSubscriptionLog(sub, entry.task, time.Now(), entry.message); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, entry := range []struct {
+		task      domain.Task
+		want      string
+		otherWant string
+	}{{first, "请求资源 A 成功", "请求资源 B 失败"}, {second, "请求资源 B 失败", "请求资源 A 成功"}} {
+		raw, err := app.TaskLog(entry.task.ID)
+		if err != nil || !strings.Contains(raw, entry.want) {
+			t.Fatalf("task=%d raw=%s err=%v", entry.task.ID, raw, err)
+		}
+		if strings.Contains(raw, entry.otherWant) {
+			t.Fatalf("task log contains another task: %s", raw)
+		}
+	}
+	path := app.LogPath(sub, base)
+	if filepath.Base(path) != "author_name_20261013.log" {
+		t.Fatal(path)
+	}
+	entries, err := os.ReadDir(app.Config.LogDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("per-post log files were created: entries=%v err=%v", entries, err)
 	}
 }

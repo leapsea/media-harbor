@@ -26,7 +26,7 @@ func TestSharedAuthorAvatar(t *testing.T) {
 		if err = db.SaveSubscription(&sub); err != nil {
 			t.Fatal(err)
 		}
-		path := engine.AvatarPath(root, sub)
+		path := engine.AvatarPath(filepath.Join(root, "downloads"), sub)
 		if err = os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -34,7 +34,7 @@ func TestSharedAuthorAvatar(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	app := service.New(config.Config{DataDir: root, DownloadDir: root, ArchiveDir: root}, db, engine.CLI{DataDir: root})
+	app := service.New(config.Config{DataDir: root, DownloadDir: filepath.Join(root, "downloads"), ArchiveDir: filepath.Join(root, "archive")}, db, engine.CLI{DataDir: root})
 	handler := Handler(app)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest("GET", "/api/subscriptions", nil))

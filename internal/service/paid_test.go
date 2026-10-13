@@ -79,7 +79,7 @@ func TestPaidVideoSkipAndManualRetry(t *testing.T) {
 		t.Fatal("policy not persisted")
 	}
 	log, err := a.GroupLog(peer.ID)
-	if err != nil || !strings.Contains(log, "已跳过") || !strings.Contains(log, "跳过付费视频") {
+	if err != nil || !strings.Contains(log, "跳过付费帖子") || !strings.Contains(log, "跳过付费视频") {
 		t.Fatalf("%s %v", log, err)
 	}
 	tasks, _ := a.Repo.Tasks()

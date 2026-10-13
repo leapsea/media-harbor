@@ -1,9 +1,7 @@
 package service
 
 import (
-	"fmt"
 	"media-harbor/internal/domain"
-	"os"
 	"strings"
 	"time"
 )
@@ -53,18 +51,7 @@ func (a *App) skipBlockedPaidLocked(task *domain.Task, sub domain.Subscription) 
 	if err = a.Repo.SaveTask(task); err != nil {
 		return false, err
 	}
-	// 尚未启动引擎的事件仍写入挂载日志，记录媒体及首次失败来源。
-	a.logMu.Lock()
-	defer a.logMu.Unlock()
-	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
-	if task.Attempts == 0 {
-		flags = os.O_CREATE | os.O_WRONLY | os.O_TRUNC
-	}
-	file, err := os.OpenFile(a.LogPath(*task), flags, 0644)
-	if err != nil {
-		return true, err
-	}
-	defer file.Close()
-	_, err = fmt.Fprint(file, taskLogLine(task.FinishedAt, "媒体 "+content.RemoteID+"；"+reason))
+	// 尚未启动引擎的策略结果也写入订阅日志，沿用统一的任务身份和文件句柄。
+	err = a.writeSubscriptionLog(sub, *task, task.FinishedAt, "跳过付费帖子 "+content.RemoteID+" · "+content.Title+"；"+reason)
 	return true, err
 }

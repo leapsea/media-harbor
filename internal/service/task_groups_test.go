@@ -60,12 +60,12 @@ func TestLimitedScan(t *testing.T) {
 	if err != nil || len(contents) != 10 {
 		t.Fatalf("contents=%d err=%v", len(contents), err)
 	}
-	raw, err := os.ReadFile(a.LogPath(last))
+	raw, err := os.ReadFile(taskLogPathForTest(t, a, last))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 重复统计必须说明没有新增任务，避免用户误以为扫描未找到数据。
-	for _, want := range []string{"仅获取前 10", "累计发现 10 项", "新增下载 0 项；已存在跳过 10 项", "本次执行结束"} {
+	// 扫描日志说明实际处理数量和队列结果，不展示执行次数。
+	for _, want := range []string{"累计资源 10 项", "新增下载 0 项；已存在跳过 10 项", "执行结束"} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("missing %s: %s", want, raw)
 		}
@@ -151,7 +151,7 @@ func TestGroupScope(t *testing.T) {
 	}
 	// 聚合日志只包含本次十条，其他订阅及积压不能混入。
 	log, err := a.GroupLog(s.ID)
-	if err != nil || !strings.Contains(log, "测试模式：只处理前 10") || strings.Count(log, "—— 任务 #") != 10 {
+	if err != nil || !strings.Contains(log, "开始下载帖子：1") || strings.Contains(log, "第 1 次执行") {
 		t.Fatalf("log=%s err=%v", log, err)
 	}
 }
@@ -171,21 +171,12 @@ func TestScanWaitingLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.wg.Wait()
-	raw, err := os.ReadFile(a.LogPath(task))
+	raw, err := os.ReadFile(taskLogPathForTest(t, a, task))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "正在枚举媒体，已等待") || !strings.Contains(string(raw), "本次执行结束") {
+	if !strings.Contains(string(raw), "正在枚举媒体，已等待") || !strings.Contains(string(raw), "执行结束") {
 		t.Fatalf("log=%s", raw)
-	}
-}
-
-// TestConciseProgressLog 流百分比由详情负责，日志保留具体错误。
-func TestConciseProgressLog(t *testing.T) {
-	raw := "[2026-10-12 17:28:33] [download] 99% ETA 00:01\n[2026-10-12 17:28:33] [download] 100.0% ETA 00:01\n[2026-10-12 17:28:34] [download] 99.7% ETA 00:01\n[2026-10-12 17:28:34] [download] 100% in 00:01:08\n[2026-10-12 17:28:34] ERROR: HTTP Error 403\n"
-	got := conciseTaskLog(raw)
-	if strings.Contains(got, "[download]") || !strings.Contains(got, "ERROR: HTTP Error 403") {
-		t.Fatal(got)
 	}
 }
 
@@ -213,7 +204,7 @@ func TestDebugLimitSwitch(t *testing.T) {
 			t.Fatal(groups, err)
 		}
 		log, err := a.GroupLog(sub.ID)
-		if err != nil || strings.Contains(log, "测试模式") != (limit > 0) {
+		if err != nil || strings.Contains(log, "第 1 次执行") {
 			t.Fatal(log, err)
 		}
 	}

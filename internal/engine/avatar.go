@@ -17,18 +17,17 @@ import (
 var avatarMu sync.Mutex
 
 // AvatarPath 优先使用平台稳定 ID，同一作者的主页与详情共用头像。
-func AvatarPath(dataDir string, sub domain.Subscription) string {
+func AvatarPath(root string, sub domain.Subscription) string {
 	if sub.Platform != "instagram" || sub.StableID == "" {
 		return ""
 	}
 	key := sha256.Sum256([]byte(sub.StableID))
-	return filepath.Join(dataDir, "avatars", "instagram", fmt.Sprintf("%x.img", key))
+	return filepath.Join(root, "avatars", "instagram", fmt.Sprintf("%x.img", key))
 }
 
 // UpdateAvatar 复用 gallery-dl 的头像提取器和 Cookie；不受媒体历史归档去重影响。
 // 先下载到独立目录，只有完整文件大小变化才替换，失败保留原头像。
-func (c CLI) UpdateAvatar(ctx context.Context, sub domain.Subscription, log func(string)) error {
-	path := AvatarPath(c.DataDir, sub)
+func (c CLI) UpdateAvatar(ctx context.Context, sub domain.Subscription, path string, log func(string)) error {
 	if path == "" || sub.CurrentName == "" {
 		return nil
 	}
