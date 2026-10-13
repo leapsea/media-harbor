@@ -9,6 +9,7 @@ const fields: { key: Exclude<keyof UISettings, 'language'>; label: string; sizes
  { key: 'recent_downloads', label: '总览最新下载', sizes: recentDownloadSizes },
  { key: 'history_page_size', label: '下载历史每页', sizes: pageSizes },
  { key: 'task_page_size', label: '任务管理每页', sizes: pageSizes },
+ { key: 'task_log_lines', label: '任务日志行数', sizes: [50, 100, 200, 500, 1000] },
 ]
 /** 提交完整界面配置副本，避免直接修改父级对象。 */
 function set(key: Exclude<keyof UISettings, 'language'>, event: Event) {
@@ -26,8 +27,8 @@ function changeLanguage(event: Event) {
   <label>{{ t('界面语言') }}<select :value="modelValue.language" :aria-label="t('界面语言')" @change="changeLanguage($event)"><option v-for="language in languages" :key="language.value" :value="language.value">{{ language.label }}</option></select></label>
   <label v-for="field in fields" :key="field.key">{{ t(field.label) }}
    <select :value="modelValue[field.key]" :aria-label="t(field.label)" @change="set(field.key, $event)">
-    <option v-for="size in field.sizes" :key="size" :value="size">{{ t('{count} 条', { count: size }) }}</option>
-    <option v-if="!field.sizes.includes(modelValue[field.key])" :value="modelValue[field.key]">{{ t('{count} 条', { count: modelValue[field.key] }) }}</option>
+    <option v-for="size in field.sizes" :key="size" :value="size">{{ t(field.key === 'task_log_lines' ? '{count} 行' : '{count} 条', { count: size }) }}</option>
+    <option v-if="!field.sizes.includes(modelValue[field.key])" :value="modelValue[field.key]">{{ t(field.key === 'task_log_lines' ? '{count} 行' : '{count} 条', { count: modelValue[field.key] }) }}</option>
    </select>
   </label>
  </div>

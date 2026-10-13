@@ -16,6 +16,10 @@ const store = useMediaStore()
 /** 详情只在打开时加载，管理列表仍按每个配置一行展示。 */
 const TaskDetails = defineAsyncComponent(() => import('./TaskDetails.vue'))
 const detailTask = ref<Subscription | null>(null)
+/** 加载标记只跟随本次写请求，用户能看见哪一个操作正在等待确认。 */
+const pendingOperation = ref<{ id: number; kind: string } | null>(null)
+/** 等待动画只属于发起的按钮，不把任务持续运行误显示成请求未返回。 */
+const pending = (id: number, kind: string) => pendingOperation.value?.id === id && pendingOperation.value.kind === kind
 const { page, size, items } = usePagination(() => store.subscriptions, () => store.settings?.ui.task_page_size ?? 20)
 /** 轮询后只构造一次索引，模板中多次读取状态不反复遍历队列。 */
 const groups = computed(() => new Map(store.taskGroups.map(item => [item.subscription_id, item])))
@@ -32,11 +36,16 @@ function schedule(task: Subscription) {
  return task.schedule
 }
 /** 所有执行入口复用原调度接口，失败重试不会扩大测试批次。 */
+async function operate(id: number, kind: string, request: () => Promise<unknown>, message: string) {
+ pendingOperation.value = { id, kind }
+ try { await store.mutate(request, message) }
+ finally { pendingOperation.value = null }
+}
 async function scan(id: number, kind: string) {
- await store.mutate(() => api(`/subscriptions/${id}/scan?kind=${kind}`, 'POST'), '任务已加入队列')
+ await operate(id, kind, () => api(`/subscriptions/${id}/scan?kind=${kind}`, 'POST'), '任务已加入队列')
 }
 async function action(id: number, kind: 'cancel' | 'retry') {
- await store.mutate(() => api(`/subscriptions/${id}/tasks/${kind}`, 'POST'), kind === 'cancel' ? '待执行与运行任务已取消' : '失败任务已重新排队')
+ await operate(id, kind, () => api(`/subscriptions/${id}/tasks/${kind}`, 'POST'), kind === 'cancel' ? '待执行与运行任务已取消' : '失败任务已重新排队')
 }
 </script>
 
@@ -54,14 +63,14 @@ async function action(id: number, kind: 'cancel' | 'retry') {
     <td><strong>{{ group(task.id)?.counts.completed || 0 }} / {{ group(task.id)?.total || 0 }}</strong><small class="help">{{ t('待执行 {queued} · 运行 {running} · 失败 {failed}', { queued: group(task.id)?.counts.queued || 0, running: group(task.id)?.counts.running || 0, failed: group(task.id)?.counts.failed || 0 }) }}<template v-if="group(task.id)?.counts.skipped"> · {{ t('已跳过 {count}', { count: group(task.id)!.counts.skipped }) }}</template></small></td>
     <td>{{ formatDate(group(task.id)?.updated_at || task.created_at) }}</td>
     <td><div class="actions">
-     <template v-if="!isContent(task)"><button :disabled="store.busy" @click="scan(task.id, 'full')">{{ t("全量初始化") }}</button><button :disabled="store.busy" @click="scan(task.id, 'scan')">{{ t("增量扫描") }}</button><button :disabled="store.busy" @click="scan(task.id, 'catchup')">{{ t("补全下载") }}</button></template>
+     <template v-if="!isContent(task)"><button :disabled="store.busy" :aria-busy="pending(task.id, 'full')" @click="scan(task.id, 'full')">{{ t("全量初始化") }}</button><button :disabled="store.busy" :aria-busy="pending(task.id, 'scan')" @click="scan(task.id, 'scan')">{{ t("增量扫描") }}</button><button :disabled="store.busy" :aria-busy="pending(task.id, 'catchup')" @click="scan(task.id, 'catchup')">{{ t("补全下载") }}</button></template>
      <button @click="emit('log', task.id)">{{ t("日志") }}</button>
      <button @click="detailTask = task">{{ t('任务详情') }}</button>
-     <button v-if="['running', 'queued'].includes(group(task.id)?.status || '')" :disabled="store.busy" @click="action(task.id, 'cancel')">{{ t("取消") }}</button>
-     <button v-if="group(task.id)?.counts.failed || group(task.id)?.counts.cancelled || group(task.id)?.counts.skipped || ['failed', 'cancelled'].includes(group(task.id)?.scan_status || '')" :disabled="store.busy" @click="action(task.id, 'retry')">{{ t("重试") }}</button>
+     <button v-if="['running', 'queued'].includes(group(task.id)?.status || '')" :disabled="store.busy" :aria-busy="pending(task.id, 'cancel')" @click="action(task.id, 'cancel')">{{ t("取消") }}</button>
+     <button v-if="group(task.id)?.counts.failed || group(task.id)?.counts.cancelled || group(task.id)?.counts.skipped || ['failed', 'cancelled'].includes(group(task.id)?.scan_status || '')" :disabled="store.busy" :aria-busy="pending(task.id, 'retry')" @click="action(task.id, 'retry')">{{ t("重试") }}</button>
      <button @click="emit('edit', task)">{{ t("编辑") }}</button>
-     <button v-if="!isContent(task) && task.schedule" :disabled="store.busy" @click="store.mutate(() => api(`/subscriptions/${task.id}`, 'PUT', { ...task, enabled: !task.enabled }), task.enabled ? t('定时已暂停') : t('定时已恢复'))">{{ task.enabled ? t("暂停定时") : t("恢复定时") }}</button>
-     <button class="danger" :disabled="store.busy" @click="store.mutate(() => api(`/subscriptions/${task.id}`, 'DELETE'), t('任务已删除，文件继续保留'))">{{ t("删除") }}</button>
+     <button v-if="!isContent(task) && task.schedule" :disabled="store.busy" :aria-busy="pending(task.id, 'schedule')" @click="operate(task.id, 'schedule', () => api(`/subscriptions/${task.id}`, 'PUT', { ...task, enabled: !task.enabled }), task.enabled ? t('定时已暂停') : t('定时已恢复'))">{{ task.enabled ? t("暂停定时") : t("恢复定时") }}</button>
+     <button class="danger" :disabled="store.busy" :aria-busy="pending(task.id, 'delete')" @click="operate(task.id, 'delete', () => api(`/subscriptions/${task.id}`, 'DELETE'), t('任务已删除，文件继续保留'))">{{ t("删除") }}</button>
     </div></td>
    </tr></tbody>
   </table></div>
@@ -69,3 +78,21 @@ async function action(id: number, kind: 'cancel' | 'retry') {
  </section>
  <TaskDetails v-if="detailTask" :task="detailTask" @close="detailTask = null" />
 </template>
+
+<style scoped>
+/* 仅标记被点击的按钮，不增加提示行或改变表格密度。 */
+button[aria-busy='true']::before {
+ content: '';
+ display: inline-block;
+ width: 10px;
+ height: 10px;
+ margin-right: 4px;
+ border: 2px solid currentColor;
+ border-right-color: transparent;
+ border-radius: 50%;
+ vertical-align: -1px;
+ animation: operation-spin .8s linear infinite;
+}
+@keyframes operation-spin { to { rotate: 360deg; } }
+@media (prefers-reduced-motion: reduce) { button[aria-busy='true']::before { animation: none; } }
+</style>

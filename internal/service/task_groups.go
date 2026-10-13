@@ -1,6 +1,8 @@
 package service
 
 import (
+	"log/slog"
+	"media-harbor/internal/config"
 	"media-harbor/internal/domain"
 	"sort"
 	"time"
@@ -83,34 +85,45 @@ func (a *App) TaskGroups() ([]TaskGroup, error) {
 }
 
 // GroupAction 操作订阅内的当前批次；取消还会停止测试范围外的积压任务。
-// 复用已有取消和重试流程，保持运行 Context 与数据库状态一致。
-func (a *App) GroupAction(subscriptionID int64, action string) (int, error) {
+// 取消意图先原子提交，再停止引擎；调度与完成回写不能穿插在批次之间。
+func (a *App) GroupAction(subscriptionID int64, action string) (count int, err error) {
+	started := time.Now()
+	a.mu.Lock()
+	lockWait := time.Since(started)
+	// 将锁等待与事务耗时分开，后续卡顿能从容器日志确认发生在哪一段。
+	defer func() {
+		a.mu.Unlock()
+		slog.Info("任务控制完成", "operation", action, "subscription_id", subscriptionID,
+			"count", count, "lock_wait", lockWait, "elapsed", time.Since(started), "error", err)
+	}()
+	if action == "cancel" {
+		ids, err := a.Repo.CancelSubscriptionTasks(subscriptionID)
+		if err != nil {
+			return 0, err
+		}
+		for _, id := range ids {
+			if cancel := a.active[id]; cancel != nil {
+				cancel()
+			}
+		}
+		return len(ids), nil
+	}
 	settings, err := a.Repo.Settings()
 	if err != nil {
 		return 0, err
 	}
-	tasks, err := a.Repo.Tasks()
+	rows, err := a.Repo.TaskContentRows(subscriptionID, settings.Debug.TestItemLimit)
 	if err != nil {
 		return 0, err
 	}
-	selected := selectedTasks(tasks, subscriptionID, settings.Debug.TestItemLimit)
-	// 取消代表停止整个订阅的现有队列，不让范围外积压随后恢复。
-	if action == "cancel" {
-		selected = tasks
-	}
-	// 重试恢复整个批次后再允许调度，避免快速失败与逐条解除策略相互覆盖。
-	if action == "retry" {
-		a.mu.Lock()
-		defer a.mu.Unlock()
-	}
-	count := 0
-	for _, t := range selected {
+	// 重试恢复整个批次后再允许调度，仍只处理当前调试范围。
+	count = 0
+	for _, row := range rows {
+		t := row.Task
 		if t.SubscriptionID != subscriptionID {
 			continue
 		}
-		if action == "cancel" && (t.Status == "queued" || t.Status == "running") {
-			err = a.CancelTask(t.ID)
-		} else if action == "retry" && (t.Status == "failed" || t.Status == "cancelled" || t.Status == "skipped") {
+		if action == "retry" && (t.Status == "failed" || t.Status == "cancelled" || t.Status == "skipped") {
 			err = a.retryTaskLocked(t.ID)
 		} else {
 			continue
@@ -123,11 +136,19 @@ func (a *App) GroupAction(subscriptionID int64, action string) (int, error) {
 	return count, nil
 }
 
-// GroupLog 直接读取该订阅按日期划分的共享日志，不再遍历任务或逐个打开文件。
+// GroupLog 按界面配置读取最近日志行，不遍历全部媒体任务或返回全部历史。
 func (a *App) GroupLog(subscriptionID int64) (string, error) {
 	sub, err := a.Repo.Subscription(subscriptionID)
 	if err != nil {
 		return "", err
 	}
-	return a.readSubscriptionLogs(sub)
+	settings, err := a.Repo.Settings()
+	if err != nil {
+		return "", err
+	}
+	limit := settings.UI.TaskLogLines
+	if limit == 0 {
+		limit = config.Defaults().UI.TaskLogLines
+	}
+	return a.readSubscriptionLogTail(sub, limit)
 }

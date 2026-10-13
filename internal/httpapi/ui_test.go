@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"media-harbor/internal/config"
@@ -9,8 +10,11 @@ import (
 	"media-harbor/internal/service"
 	"media-harbor/internal/storage"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // TestRecentDownloadLimit 总览可突破旧的 8 条限制，展示数量不减少真实内容记录。
@@ -114,5 +118,53 @@ func TestDebugSettings(t *testing.T) {
 	settings.Debug.TestItemLimit = -1
 	if err := app.SaveSettings(settings); err == nil {
 		t.Fatal("接受了负数测试限制")
+	}
+}
+
+// TestTaskLogLineSettings 窗口默认只返回最近 100 行，设置保存后下一次请求立即生效。
+func TestTaskLogLineSettings(t *testing.T) {
+	root := t.TempDir()
+	db, err := storage.Open(filepath.Join(root, "media.db"), config.Defaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := service.New(config.Config{DataDir: root, LogDir: root, DownloadDir: root, ArchiveDir: root}, db, engine.CLI{DataDir: root})
+	sub := domain.Subscription{Platform: "youtube", URL: "https://www.youtube.com/@author", DisplayName: "author"}
+	if err := app.SaveSubscription(&sub); err != nil {
+		t.Fatal(err)
+	}
+	var body strings.Builder
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&body, "line-%03d\n", i)
+	}
+	if err := os.WriteFile(app.LogPath(sub, time.Now()), []byte(body.String()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	handler := Handler(app)
+	for _, limit := range []int{100, 50, 200} {
+		if limit != 100 {
+			settings, _ := app.Settings()
+			settings.UI.TaskLogLines = limit
+			raw, _ := json.Marshal(settings)
+			saved := httptest.NewRecorder()
+			handler.ServeHTTP(saved, httptest.NewRequest("PUT", "/api/settings", bytes.NewReader(raw)))
+			if saved.Code != 200 {
+				t.Fatal(saved.Code, saved.Body.String())
+			}
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest("GET", fmt.Sprintf("/api/subscriptions/%d/log", sub.ID), nil))
+		var result struct {
+			Log string `json:"log"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || strings.Count(result.Log, "\n") != limit || !strings.HasPrefix(result.Log, fmt.Sprintf("line-%03d", 200-limit)) {
+			t.Fatal(limit, response.Body.String(), err)
+		}
+	}
+	settings, _ := app.Settings()
+	settings.UI.TaskLogLines = -1
+	if err := app.SaveSettings(settings); err == nil {
+		t.Fatal("接受了负数日志行数")
 	}
 }

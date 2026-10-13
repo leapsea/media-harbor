@@ -171,7 +171,8 @@ def run_case(name, mounted, readonly_download=False):
             assert len(captions) == 1 and captions[0].endswith('.zh-CN.vtt'), paths
             log = request(f"/subscriptions/{sub['id']}/log")["log"]
             assert log.index("主任务：开始下载视频") < log.index("附属任务 [字幕 zh-CN]：开始") < log.index("附属任务 [额外音频]：完成") < log.index("附属任务全部结束"), log
-            assert "[download]" not in log and "@transfer " not in log, log
+            # 订阅日志保留引擎诊断行；结构化进度仍只进入任务详情，不混入可读日志。
+            assert "@transfer " not in log, log
             # 真实产物大小与持久阶段对应，附属项不单独创建调度任务。
             details = request(f"/subscriptions/{sub['id']}/details")
             assert len(details["items"]) == 1 and details["items"][0]["status"] == "completed", details

@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"media-harbor/internal/config"
 	"media-harbor/internal/domain"
 	"media-harbor/internal/engine"
+	"strings"
 	"time"
 )
 
@@ -75,6 +77,8 @@ func (a *App) waitScanQueue(ctx context.Context, sid int64, item domain.Content,
 	ticker := time.NewTicker(config.ScanQueueCheckInterval)
 	defer ticker.Stop()
 	waiting := false
+	var lastReport time.Time
+	started := time.Now()
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -82,12 +86,31 @@ func (a *App) waitScanQueue(ctx context.Context, sid int64, item domain.Content,
 		a.mu.Lock()
 		items, err := a.Repo.Contents()
 		tasks, taskErr := a.Repo.Tasks()
+		settings, settingsErr := a.Repo.Settings()
+		subs, subsErr := a.Repo.Subscriptions()
+		platforms := map[int64]string{}
+		for _, sub := range subs {
+			platforms[sub.ID] = sub.Platform
+		}
+		physicalActive := []string{}
+		for _, task := range tasks {
+			if task.ContentID != 0 && a.active[task.ID] != nil && platforms[task.SubscriptionID] == platforms[sid] {
+				physicalActive = append(physicalActive, fmt.Sprintf("#%d(配置 #%d，%s)", task.ID, task.SubscriptionID, task.Status))
+			}
+		}
+		writable := len(a.directories) > 1 && a.directories[1].Writable
 		a.mu.Unlock()
 		if err != nil {
 			return err
 		}
 		if taskErr != nil {
 			return taskErr
+		}
+		if settingsErr != nil {
+			return settingsErr
+		}
+		if subsErr != nil {
+			return subsErr
 		}
 		for _, known := range items {
 			if known.SubscriptionID != sid || known.RemoteID != item.RemoteID {
@@ -117,22 +140,62 @@ func (a *App) waitScanQueue(ctx context.Context, sid int64, item domain.Content,
 				}
 			}
 		}
-		pending := 0
-		for _, t := range tasks {
-			if t.SubscriptionID == sid && t.ContentID != 0 && (t.Status == "queued" || t.Status == "running") {
-				pending++
+		// 背压与调度器使用相同执行范围；范围外积压没有消费者，不能占容量。
+		queued, running := 0, 0
+		active := []string{}
+		for _, task := range selectedTasks(tasks, sid, settings.Debug.TestItemLimit) {
+			if task.ContentID == 0 {
+				continue
+			}
+			if task.Status == "queued" {
+				queued++
+			}
+			if task.Status == "running" {
+				running++
+				stage := "等待引擎响应"
+				for _, progress := range task.Progress {
+					if progress.Status == "running" {
+						stage = fmt.Sprintf("%s %.1f%% (%d/%d 字节)", progress.Kind, progress.Percent, progress.BytesDone, progress.BytesTotal)
+						break
+					}
+				}
+				active = append(active, fmt.Sprintf("#%d 内容 #%d · %s · 已运行 %s", task.ID, task.ContentID, stage, time.Since(task.StartedAt).Round(time.Second)))
+			}
+		}
+		pending := queued + running
+		allPending := 0
+		for _, task := range tasks {
+			if task.SubscriptionID == sid && task.ContentID != 0 && (task.Status == "queued" || task.Status == "running") {
+				allPending++
 			}
 		}
 		if pending < config.ScanQueueCapacity {
 			if waiting {
-				log("下载队列已释放容量，继续解析入队")
+				log(fmt.Sprintf("下载队列已释放容量，继续解析入队；等待 %s；当前容量 %d/%d", time.Since(started).Round(time.Second), pending, config.ScanQueueCapacity))
 			}
 			return nil
 		}
-		if !waiting {
-			log("下载队列已满，暂停解析入队，等待消费者处理")
+		// 已入队记录继续保留；只有背压确实需要消费者时才报告目录不可写。
+		if !writable {
+			return fmt.Errorf("扫描无法继续：下载队列已满且下载目录不可写，消费者无法执行；请恢复目录后重试")
+		}
+		if !waiting || time.Since(lastReport) >= config.ScanLogInterval {
+			limit := settings.YouTubeConcurrent
+			if platforms[sid] == "instagram" {
+				limit = settings.InstagramConcurrent
+			}
+			if len(active) == 0 {
+				active = append(active, "无")
+			}
+			if len(physicalActive) == 0 {
+				physicalActive = append(physicalActive, "无")
+			}
+			log(fmt.Sprintf("下载队列已满，暂停解析入队；等待入队资源 %s；等待 %s；容量 %d/%d；待执行 %d · 运行 %d；测试范围外积压 %d；调试限制 %d；平台并发上限 %d；下载任务：%s；平台活动消费者：%s", item.RemoteID, time.Since(started).Round(time.Second), pending, config.ScanQueueCapacity, queued, running, allPending-pending, settings.Debug.TestItemLimit, limit, strings.Join(active, "；"), strings.Join(physicalActive, "；")))
+			lastReport = time.Now()
 			waiting = true
 		}
+		// 等待不持有应用锁，显式唤醒调度器，使空闲名额及时认领持久队列。
+		a.wakeScheduler()
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

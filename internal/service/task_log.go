@@ -2,7 +2,9 @@ package service
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
+	"media-harbor/internal/config"
 	"media-harbor/internal/domain"
 	"os"
 	"path/filepath"
@@ -183,4 +185,91 @@ func (a *App) readSubscriptionLogs(sub domain.Subscription) (string, error) {
 		result.Write(raw)
 	}
 	return result.String(), nil
+}
+
+// readSubscriptionLogTail 从最新日期开始读取，凑齐行数后停止，再按时间顺序返回。
+// 磁盘日志保留完整内容，读取上限只影响日志窗口及其接口。
+func (a *App) readSubscriptionLogTail(sub domain.Subscription, limit int) (string, error) {
+	a.logMu.Lock()
+	defer a.logMu.Unlock()
+	paths, err := filepath.Glob(filepath.Join(a.Config.LogDir, logNamePrefix(sub.DisplayName)+"_????????.log"))
+	if err != nil {
+		return "", err
+	}
+	sort.Strings(paths)
+	parts := []string{}
+	remaining := limit
+	for i := len(paths) - 1; i >= 0 && remaining > 0; i-- {
+		if writer := a.loggers[paths[i]]; writer != nil {
+			if err := writer.buffer.Flush(); err != nil {
+				return "", err
+			}
+		}
+		raw, err := tailLogFile(paths[i], remaining)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, raw)
+		remaining -= strings.Count(raw, "\n")
+		if raw != "" && !strings.HasSuffix(raw, "\n") {
+			remaining--
+		}
+	}
+	var result strings.Builder
+	for i := len(parts) - 1; i >= 0; i-- {
+		if parts[i] == "" {
+			continue
+		}
+		// 日期文件之间保持行边界，上一文件末行没有换行符时也不拼接两条记录。
+		if result.Len() > 0 && !strings.HasSuffix(result.String(), "\n") {
+			result.WriteByte('\n')
+		}
+		result.WriteString(parts[i])
+	}
+	return result.String(), nil
+}
+
+// tailLogFile 从文件末尾按块读取；先找到完整行边界，再截取，避免切断 UTF-8。
+// 最后一行没有换行符时也算一行，结尾换行符不额外算作空行。
+func tailLogFile(path string, limit int) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return "", err
+	}
+	offset, newlines := info.Size(), 0
+	chunks := [][]byte{}
+	for offset > 0 && newlines <= limit {
+		size := min(offset, int64(config.LogTailReadChunkBytes))
+		offset -= size
+		chunk := make([]byte, int(size))
+		if _, err := file.ReadAt(chunk, offset); err != nil {
+			return "", err
+		}
+		chunks = append(chunks, chunk)
+		newlines += bytes.Count(chunk, []byte{'\n'})
+	}
+	var raw bytes.Buffer
+	for i := len(chunks) - 1; i >= 0; i-- {
+		raw.Write(chunks[i])
+	}
+	data := raw.Bytes()
+	end := len(data)
+	if end > 0 && data[end-1] == '\n' {
+		end--
+	}
+	lines := 1
+	for i := end - 1; i >= 0; i-- {
+		if data[i] == '\n' {
+			lines++
+			if lines > limit {
+				return string(data[i+1:]), nil
+			}
+		}
+	}
+	return string(data), nil
 }

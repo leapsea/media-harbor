@@ -146,6 +146,7 @@ type UISettings struct {
 	RecentDownloads int    `json:"recent_downloads"`
 	HistoryPageSize int    `json:"history_page_size"`
 	TaskPageSize    int    `json:"task_page_size"`
+	TaskLogLines    int    `json:"task_log_lines"`
 }
 
 // DebugSettings 控制测试批次，0 表示不限条目。
@@ -222,6 +223,9 @@ type Repository interface {
 	Content(int64) (Content, error)
 	SaveContent(*Content) error
 	Tasks() ([]Task, error)
+	// 控制操作只读取目标订阅；批量取消在同一事务内更新任务与内容。
+	SubscriptionTasks(int64) ([]Task, error)
+	CancelSubscriptionTasks(int64) ([]int64, error)
 	TaskGroupStats(int) ([]TaskGroupStats, error)
 	TaskContentRows(int64, int) ([]TaskContentRow, error)
 	TaskStatusCounts() (map[string]int, error)

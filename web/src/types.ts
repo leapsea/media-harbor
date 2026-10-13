@@ -35,7 +35,7 @@ export interface Directory {
  checked_at: string; uid: number; gid: number
 }
 /** 展示参数单独建模，与下载行为分离。 */
-export interface UISettings { language: string; recent_downloads: number; history_page_size: number; task_page_size: number }
+export interface UISettings { language: string; recent_downloads: number; history_page_size: number; task_page_size: number; task_log_lines: number }
 export interface Settings {
  youtube_concurrent: number; instagram_concurrent: number
  template: string; auto_archive: boolean; use_upload_date: boolean; youtube: YouTubeOptions; ui: UISettings; debug: { test_item_limit: number }

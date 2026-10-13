@@ -15,22 +15,24 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // App 持有接口依赖；入口负责注入 SQLite 和 CLI 适配器。
 type App struct {
-	Config      config.Config
-	Repo        domain.Repository
-	Engine      domain.Engine
-	mu          sync.Mutex
-	logMu       sync.Mutex
-	avatarMu    sync.Mutex // 头像更新与移动归档共用锁，避免并发产生两个副本。
-	loggers     map[string]*subscriptionLogWriter
-	active      map[int64]context.CancelFunc
-	wake        chan struct{}
-	directories []DirectoryStatus
-	wg          sync.WaitGroup
+	Config         config.Config
+	Repo           domain.Repository
+	Engine         domain.Engine
+	mu             sync.Mutex
+	logMu          sync.Mutex
+	avatarMu       sync.Mutex // 头像更新与移动归档共用锁，避免并发产生两个副本。
+	loggers        map[string]*subscriptionLogWriter
+	active         map[int64]context.CancelFunc
+	wake           chan struct{}
+	directories    []DirectoryStatus
+	wg             sync.WaitGroup
+	schedulerPhase atomic.Pointer[schedulerPhase]
 }
 
 // New 不启动隐式后台协程，主程序明确控制生命周期。
@@ -141,7 +143,7 @@ func (a *App) QueueScan(id int64, kind string) (domain.Task, error) {
 	if kind != "full" && kind != "scan" && kind != "catchup" {
 		return domain.Task{}, fmt.Errorf("扫描类型无效")
 	}
-	tasks, e := a.Repo.Tasks()
+	tasks, e := a.Repo.SubscriptionTasks(id)
 	if e != nil {
 		return domain.Task{}, e
 	}
@@ -163,7 +165,7 @@ func (a *App) QueueScan(id int64, kind string) (domain.Task, error) {
 func (a *App) DeleteSubscription(id int64) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	tasks, e := a.Repo.Tasks()
+	tasks, e := a.Repo.SubscriptionTasks(id)
 	if e != nil {
 		return e
 	}
@@ -260,6 +262,9 @@ func (a *App) Settings() (domain.Settings, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	settings, err := a.Repo.Settings()
+	if settings.UI.TaskLogLines == 0 {
+		settings.UI.TaskLogLines = config.Defaults().UI.TaskLogLines
+	}
 	if !ArchiveMounted(a.directories) {
 		settings.AutoArchive = false
 	}
@@ -284,7 +289,10 @@ func (a *App) SaveSettings(s domain.Settings) error {
 	default:
 		return fmt.Errorf("不支持的界面语言")
 	}
-	if s.UI.RecentDownloads < 1 || s.UI.HistoryPageSize < 1 || s.UI.TaskPageSize < 1 {
+	if s.UI.TaskLogLines == 0 {
+		s.UI.TaskLogLines = config.Defaults().UI.TaskLogLines
+	}
+	if s.UI.RecentDownloads < 1 || s.UI.HistoryPageSize < 1 || s.UI.TaskPageSize < 1 || s.UI.TaskLogLines < 1 {
 		return fmt.Errorf("界面展示数量至少为 1")
 	}
 	// 0 关闭调试限制，正整数由界面自定义并用于扫描、调度与重试。
@@ -336,6 +344,10 @@ func (a *App) wakeScheduler() {
 
 // runScheduler 在启动时恢复队列；定时检查处理周期任务，事件处理下载补位。
 func (a *App) runScheduler(ctx context.Context, ticks <-chan time.Time) {
+	// 诊断使用原子快照，不等待调度器正在等待的应用锁或日志锁。
+	diagnosticsDone := make(chan struct{})
+	go func() { defer close(diagnosticsDone); a.watchScheduler(ctx) }()
+	defer func() { <-diagnosticsDone }()
 	a.wakeScheduler()
 	for {
 		select {
@@ -349,7 +361,9 @@ func (a *App) runScheduler(ctx context.Context, ticks <-chan time.Time) {
 			a.closeLogs()
 			return
 		case <-ticks:
+			a.markSchedulerPhase("刷新日志缓冲")
 			a.flushLogs()
+			a.schedulerPhase.Store(nil)
 			a.wakeScheduler()
 		case <-a.wake:
 			if ctx.Err() != nil {
@@ -366,16 +380,21 @@ func (a *App) runScheduler(ctx context.Context, ticks <-chan time.Time) {
 // 调度器不在平台请求期间持锁。
 // 扫描生产者与下载消费者分别受平台限额约束，互不占用执行名额。
 func (a *App) tick(ctx context.Context) error {
+	a.markSchedulerPhase("等待应用锁")
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	defer a.schedulerPhase.Store(nil)
+	a.markSchedulerPhase("读取设置")
 	settings, e := a.Repo.Settings()
 	if e != nil {
 		return e
 	}
+	a.markSchedulerPhase("读取任务配置")
 	subs, e := a.Repo.Subscriptions()
 	if e != nil {
 		return e
 	}
+	a.markSchedulerPhase("读取持久任务队列")
 	tasks, e := a.Repo.Tasks()
 	if e != nil {
 		return e
@@ -426,6 +445,7 @@ func (a *App) tick(ctx context.Context) error {
 		}
 	}
 	// 队列按创建顺序执行，扫描及下载分别计入所属平台并发。
+	a.markSchedulerPhase("认领任务与分配并发名额")
 	for i := len(tasks) - 1; i >= 0; i-- {
 		t := tasks[i]
 		s, exists := subMap[t.SubscriptionID]
@@ -484,6 +504,7 @@ func (a *App) tick(ctx context.Context) error {
 		for _, c := range items {
 			s, ok := subMap[c.SubscriptionID]
 			if ok && s.Archive && c.Status == "completed" && !c.Archived && c.Error == "" {
+				a.markSchedulerPhase(fmt.Sprintf("归档内容 #%d（配置 #%d）", c.ID, c.SubscriptionID))
 				if e = a.archive(&c); e != nil {
 					c.Error = "归档失败: " + e.Error()
 					if e = a.Repo.SaveContent(&c); e != nil {
@@ -516,9 +537,13 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 	}
 	started := time.Now()
 	if t.ContentID == 0 {
-		log("开始解析订阅内容")
+		log(fmt.Sprintf("开始解析订阅内容；扫描类型 %s；平台 %s；调试限制 %d", t.Kind, s.Platform, settings.Debug.TestItemLimit))
 	} else {
-		log("开始处理媒体任务")
+		limit := settings.YouTubeConcurrent
+		if s.Platform == "instagram" {
+			limit = settings.InstagramConcurrent
+		}
+		log(fmt.Sprintf("开始处理媒体任务；平台 %s；配置 #%d；平台并发上限 %d", s.Platform, s.ID, limit))
 	}
 	if t.ContentID == 0 {
 		log("解析订阅地址：" + s.URL)
@@ -532,6 +557,17 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 		}
 		// 等待期间定期报告耗时，不输出 Cookie 或引擎 JSON 原文。
 		progressDone, progressStopped := make(chan struct{}), make(chan struct{})
+		var queueWaiting atomic.Bool
+		// 背压期间只输出消费者快照，不把暂停读取误报为正在解析平台。
+		scanLog := func(message string) {
+			if strings.HasPrefix(message, "下载队列已满") {
+				queueWaiting.Store(true)
+			}
+			if strings.HasPrefix(message, "下载队列已释放容量") {
+				queueWaiting.Store(false)
+			}
+			log(message)
+		}
 		go func() {
 			defer close(progressStopped)
 			ticker := time.NewTicker(config.ScanLogInterval)
@@ -541,7 +577,9 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 				case <-progressDone:
 					return
 				case <-ticker.C:
-					log(fmt.Sprintf("正在枚举媒体，已等待 %s", time.Since(started).Round(time.Second)))
+					if !queueWaiting.Load() {
+						log(fmt.Sprintf("等待平台返回媒体，扫描已运行 %s", time.Since(started).Round(time.Second)))
+					}
 				}
 			}
 		}()
@@ -594,7 +632,7 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 			}
 			return nil
 		}
-		result, scanErr := a.streamScan(ctx, s, settings.Debug.TestItemLimit, t.Kind == "catchup", log, consume)
+		result, scanErr := a.streamScan(ctx, s, settings.Debug.TestItemLimit, t.Kind == "catchup", scanLog, consume)
 		close(progressDone)
 		<-progressStopped
 		log(fmt.Sprintf("账号识别：稳定 ID=%s；当前名称=%s", result.StableID, result.CurrentName))
@@ -674,6 +712,7 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 	log(fmt.Sprintf("开始下载帖子：%s · %s；资源序号 %d；发布日期 %s", c.RemoteID, c.Title, c.Asset, publicationLabel(c.Published)))
 	log("请求资源地址：" + c.URL)
 	e = a.Engine.Download(ctx, s, c, options, dir, log)
+	log(fmt.Sprintf("下载引擎已返回；成功 %t；取消 %t；准备读取产物并提交完成状态", e == nil, ctx.Err() != nil))
 	downloadErr := e
 	// 以当前语言的下载元数据刷新标题，已存在的媒体文件也无需重新下载。
 	if s.Platform == "youtube" {
@@ -692,7 +731,10 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 			c.Availability = availability
 		}
 	}
+	log("等待完成阶段应用锁")
+	completionWait := time.Now()
 	a.mu.Lock()
+	log(fmt.Sprintf("已取得完成阶段应用锁；等待 %s；开始检查并保存产物", time.Since(completionWait).Round(time.Millisecond)))
 	current, readErr := a.Repo.Task(t.ID)
 	if readErr == nil && current.Status == "running" && ctx.Err() == nil {
 		var skipped *domain.PaidVideoSkippedError
@@ -738,6 +780,7 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 		}
 	}
 	a.mu.Unlock()
+	log("完成阶段应用锁已释放；准备结束任务并归还下载名额")
 	if e != nil {
 		log(e.Error())
 	}

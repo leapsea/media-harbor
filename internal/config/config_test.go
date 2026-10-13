@@ -30,7 +30,7 @@ func TestSavedDefaults(t *testing.T) {
 // TestUISettingsDefaults 界面数量独立于引擎下载上限，初始化统一由配置快照提供。
 func TestUISettingsDefaults(t *testing.T) {
 	ui := Defaults().UI
-	if ui.Language != "zh-CN" || ui.RecentDownloads != 3 || ui.HistoryPageSize != 20 || ui.TaskPageSize != 20 {
+	if ui.Language != "zh-CN" || ui.RecentDownloads != 3 || ui.HistoryPageSize != 20 || ui.TaskPageSize != 20 || ui.TaskLogLines != 100 {
 		t.Fatal(ui)
 	}
 }

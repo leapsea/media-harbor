@@ -49,7 +49,12 @@ async function showLog(id: number) {
  if (opening) { await nextTick(); logArea.value?.focus() }
  try {
   const result = await pending
-  if (requestId === logRequestId && log.value !== null) log.value = result.log
+  if (requestId === logRequestId && log.value !== null) {
+   log.value = result.log
+   // 等待文本框完成渲染，首次加载和轮询刷新都定位到最新一行。
+   await nextTick()
+   if (requestId === logRequestId && logArea.value) logArea.value.scrollTop = logArea.value.scrollHeight
+  }
  }
  catch (e) { if (requestId === logRequestId && log.value !== null) store.reportError(e) }
  finally { if (requestId === logRequestId) logLoading.value = false }

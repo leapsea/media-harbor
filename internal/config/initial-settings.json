@@ -23,6 +23,7 @@
     "recent_downloads": 3,
     "history_page_size": 20,
     "task_page_size": 20,
+    "task_log_lines": 100,
     "language": "zh-CN"
   },
   "debug": {

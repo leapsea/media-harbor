@@ -23,8 +23,14 @@ const ScanQueueCapacity = 32
 // ScanQueueCheckInterval 等待下载消费者释放持久队列容量。
 const ScanQueueCheckInterval = time.Second
 
+// SchedulerDiagnosticInterval 在调度被锁或存储阻塞时周期记录最后阶段。
+const SchedulerDiagnosticInterval = 30 * time.Second
+
 // ScanLogInterval 控制扫描等待期间的可见进度频率。
 const ScanLogInterval = 5 * time.Second
+
+// LogTailReadChunkBytes 按块从文件尾部读取，日志窗口不扫描全部历史内容。
+const LogTailReadChunkBytes = 32 * 1024
 
 // DryRunItemLimit 在未启用调试限制时只验证前十个条目，避免枚举全部历史。
 const DryRunItemLimit = 10

@@ -175,7 +175,7 @@ func TestScanWaitingLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "正在枚举媒体，已等待") || !strings.Contains(string(raw), "执行结束") {
+	if !strings.Contains(string(raw), "等待平台返回媒体，扫描已运行") || !strings.Contains(string(raw), "执行结束") {
 		t.Fatalf("log=%s", raw)
 	}
 }
