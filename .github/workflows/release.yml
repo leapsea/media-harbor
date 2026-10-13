@@ -50,7 +50,8 @@ jobs:
       yt_dlp: ${{ steps.release.outputs.yt_dlp }}
       ffmpeg: ${{ steps.release.outputs.ffmpeg }}
     steps:
-      - uses: actions/checkout@v4
+      # Action 自身使用 Node.js 24；setup-node 的 node-version 只控制项目构建环境。
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ (github.event_name == 'schedule' || inputs.check_updates) && github.event.repository.default_branch || github.ref }}
@@ -87,10 +88,10 @@ jobs:
     if: needs.resolve.outputs.build == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.resolve.outputs.source_sha }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Backend tests and analysis
@@ -103,10 +104,10 @@ jobs:
     if: needs.resolve.outputs.build == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.resolve.outputs.source_sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
           cache: npm
@@ -130,22 +131,22 @@ jobs:
       YTDLP: ${{ needs.resolve.outputs.yt_dlp }}
       FFMPEG: ${{ needs.resolve.outputs.ffmpeg }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ needs.resolve.outputs.source_sha }}
       # containerd 保存完整多架构索引，测试与发布使用同一份本地产物。
-      - uses: docker/setup-docker-action@v4
+      - uses: docker/setup-docker-action@v5
         with:
           daemon-config: |
             {"features": {"containerd-snapshotter": true}}
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
       - name: Resolve image identity
         run: |
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
           echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-      - uses: docker/metadata-action@v5
+      - uses: docker/metadata-action@v6
         id: meta
         with:
           images: ${{ env.IMAGE }}
@@ -159,7 +160,7 @@ jobs:
             type=raw,value=latest,enable=${{ needs.resolve.outputs.automatic == 'true' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')))) }}
       # 双架构一次构建，共用前端与 Go 依赖层；验证完成前不推送镜像。
       - name: Build multi-architecture test image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -195,7 +196,7 @@ jobs:
         run: python3 scripts/container-smoke.py
       - name: Log in to GHCR
         if: needs.resolve.outputs.automatic == 'true' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'workflow_dispatch'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

@@ -48,7 +48,8 @@ class InstagramAdapterTest(unittest.TestCase):
         client = api()
         client.extractor = SimpleNamespace(root="https://www.instagram.com",
             log=SimpleNamespace(info=lambda *args: None),
-            request=lambda address, **kwargs: SimpleNamespace(text=page))
+            # 模拟真实 HTTP 响应，为正文解析与新增状态日志同时提供所需字段。
+            request=lambda address, **kwargs: SimpleNamespace(text=page, status_code=200))
         return client, AbortExtraction
 
     def test_redirect_falls_back_to_webpage(self):
