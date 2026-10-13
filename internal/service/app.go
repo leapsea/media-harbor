@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,8 @@ type App struct {
 	avatarMu       sync.Mutex // 头像更新与移动归档共用锁，避免并发产生两个副本。
 	loggers        map[string]*subscriptionLogWriter
 	active         map[int64]context.CancelFunc
+	activeInfo     map[int64]runningTaskInfo
+	queueWaits     map[int64]domain.PlatformRun
 	wake           chan struct{}
 	directories    []DirectoryStatus
 	wg             sync.WaitGroup
@@ -39,7 +42,7 @@ type App struct {
 // Repository 与 Engine 的实现仅在主程序中选择。
 // 构造时的目录快照会在 Dashboard 展示。
 func New(c config.Config, r domain.Repository, e domain.Engine) *App {
-	return &App{Config: c, Repo: r, Engine: e, active: map[int64]context.CancelFunc{}, loggers: map[string]*subscriptionLogWriter{}, wake: make(chan struct{}, 1), directories: DetectDirectories(c)}
+	return &App{Config: c, Repo: r, Engine: e, active: map[int64]context.CancelFunc{}, activeInfo: map[int64]runningTaskInfo{}, queueWaits: map[int64]domain.PlatformRun{}, loggers: map[string]*subscriptionLogWriter{}, wake: make(chan struct{}, 1), directories: DetectDirectories(c)}
 }
 
 // NextRun 支持 @every 6h、@daily 和标准五字段 Cron。
@@ -248,6 +251,7 @@ func (a *App) retryTaskLocked(id int64) error {
 		}
 	}
 	t.Status = "queued"
+	t.QueuedAt, t.SourceTaskID = time.Now(), 0
 	t.Error = ""
 	t.FinishedAt = time.Time{}
 	err := a.Repo.SaveTask(&t)
@@ -378,7 +382,7 @@ func (a *App) runScheduler(ctx context.Context, ticks <-chan time.Time) {
 
 // tick 在锁内认领任务，避免手动操作与调度互相覆盖状态。
 // 调度器不在平台请求期间持锁。
-// 扫描生产者与下载消费者分别受平台限额约束，互不占用执行名额。
+// 每个平台一次执行一个配置；当前配置的扫描与媒体下载仍使用独立名额。
 func (a *App) tick(ctx context.Context) error {
 	a.markSchedulerPhase("等待应用锁")
 	a.mu.Lock()
@@ -415,15 +419,32 @@ func (a *App) tick(ctx context.Context) error {
 			if t.ContentID == 0 {
 				busyScans[t.SubscriptionID] = true
 			}
-			counts[subMap[t.SubscriptionID].Platform+taskLane(t)]++
+			// 保留进程所属平台，删除记录或取消后也不能提前启动下一位博主。
+			if _, ok := a.activeInfo[t.ID]; !ok {
+				a.activeInfo[t.ID] = runningTaskInfo{Platform: subMap[t.SubscriptionID].Platform, SubscriptionID: t.SubscriptionID, Lane: taskLane(t)}
+			}
 		}
 	}
+	for id, info := range a.activeInfo {
+		if a.active[id] != nil {
+			counts[info.Platform+info.Lane]++
+		}
+	}
+	// 同时到期的周期任务按到期时间进入队列，避免配置列表顺序决定先后。
+	sort.SliceStable(subs, func(i, j int) bool {
+		if subs[i].NextRun.Equal(subs[j].NextRun) {
+			return subs[i].ID < subs[j].ID
+		}
+		return subs[i].NextRun.Before(subs[j].NextRun)
+	})
 	// 手动暂停订阅只停止后续定时扫描，现有下载队列继续处理。
 	for _, s := range subs {
 		if domain.TaskMode(s.Platform, s.URL) != "content" && !s.LastScan.IsZero() && s.Enabled && s.Schedule != "" && !s.NextRun.After(time.Now()) && !scanning[s.ID] {
-			if _, e = a.Repo.Enqueue(s.ID, 0, "scan"); e != nil {
+			var queued domain.Task
+			if queued, e = a.Repo.Enqueue(s.ID, 0, "scan"); e != nil {
 				return e
 			}
+			tasks = append(tasks, queued)
 			s.NextRun, e = NextRun(s.Schedule, time.Now())
 			if e != nil {
 				return e
@@ -444,12 +465,19 @@ func (a *App) tick(ctx context.Context) error {
 			}
 		}
 	}
-	// 队列按创建顺序执行，扫描及下载分别计入所属平台并发。
+	// 平台执行权先于线程名额判断，空闲线程不能启动另一个博主。
+	runs, e := a.platformQueueLocked(tasks, subMap, allowedDownloads, settings.Debug.TestItemLimit)
+	if e != nil {
+		return e
+	}
+	// 认领复用平台队列排好的快照，不再次排序完整历史。
 	a.markSchedulerPhase("认领任务与分配并发名额")
-	for i := len(tasks) - 1; i >= 0; i-- {
-		t := tasks[i]
+	for _, t := range tasks {
 		s, exists := subMap[t.SubscriptionID]
 		if !exists || t.Status != "queued" || (t.ContentID == 0 && busyScans[s.ID]) {
+			continue
+		}
+		if !belongsToPlatformRun(t, runs[s.Platform]) {
 			continue
 		}
 		// 范围外测试条目保持原样；策略跳过不占用并发名额，也无需工作目录。
@@ -462,6 +490,7 @@ func (a *App) tick(ctx context.Context) error {
 				return err
 			}
 			if skipped {
+				a.wakeScheduler() // 当前批次全部跳过时，也立即交接给队列中的下一位博主。
 				continue
 			}
 		}
@@ -488,6 +517,7 @@ func (a *App) tick(ctx context.Context) error {
 			return e
 		}
 		a.active[t.ID] = cancel
+		a.activeInfo[t.ID] = runningTaskInfo{Platform: s.Platform, SubscriptionID: s.ID, Lane: taskLane(t)}
 		if t.ContentID == 0 {
 			busyScans[s.ID] = true
 		}
@@ -611,6 +641,7 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 				return err
 			}
 			for _, item := range batch.Items {
+				item.SourceTaskID = t.ID
 				if settings.Debug.TestItemLimit > 0 && discovered >= settings.Debug.TestItemLimit {
 					break
 				}
@@ -806,6 +837,7 @@ func (a *App) finish(t domain.Task, taskErr error) {
 	defer a.mu.Unlock()
 	defer func() {
 		delete(a.active, t.ID)
+		delete(a.activeInfo, t.ID)
 		a.wakeScheduler()
 	}()
 	current, e := a.Repo.Task(t.ID)

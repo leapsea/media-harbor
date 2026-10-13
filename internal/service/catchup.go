@@ -29,11 +29,16 @@ func (a *App) retryContentLocked(existing domain.Content, discovered domain.Cont
 	}
 	if task.ID == 0 {
 		// 内容已发现但没有下载任务时，为原内容身份补建任务。
-		_, err := a.Repo.Enqueue(existing.SubscriptionID, existing.ID, "download")
-		return err
+		queued, err := a.Repo.Enqueue(existing.SubscriptionID, existing.ID, "download")
+		if err != nil {
+			return err
+		}
+		queued.SourceTaskID = discovered.SourceTaskID
+		return a.Repo.SaveTask(&queued)
 	}
 	// 已有失败任务重新排队，保留尝试次数，成功后仍使用原去重 ID。
 	task.Status = "queued"
+	task.QueuedAt, task.SourceTaskID = time.Now(), discovered.SourceTaskID
 	task.Error = ""
 	task.FinishedAt = time.Time{}
 	return a.Repo.SaveTask(&task)

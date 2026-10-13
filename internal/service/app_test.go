@@ -289,8 +289,8 @@ func TestSchedules(t *testing.T) {
 	}
 }
 
-// TestPlatformConcurrencyWithoutGlobalLimit 验证十个 Instagram 与一个 YouTube 可同时运行。
-// 同平台第十一项等待，跨平台不再被旧的全局两任务上限阻止。
+// TestPlatformConcurrencyWithoutGlobalLimit 验证各平台只采集一个博主且互不阻挡。
+// 下载并发再高也不能同时启动第二个 Instagram 博主。
 func TestPlatformConcurrencyWithoutGlobalLimit(t *testing.T) {
 	a := testApp(t, fakeEngine{block: true})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -315,8 +315,8 @@ func TestPlatformConcurrencyWithoutGlobalLimit(t *testing.T) {
 			running++
 		}
 	}
-	if running != 11 {
-		t.Fatalf("running=%d, want=11", running)
+	if running != 2 {
+		t.Fatalf("running=%d, want=2", running)
 	}
 }
 

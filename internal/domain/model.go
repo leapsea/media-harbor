@@ -57,6 +57,7 @@ type ContentFile struct {
 
 // Content 是下载去重的最小单元；Instagram 轮播的每张媒体具有独立 ID。
 type Content struct {
+	SourceTaskID   int64         `json:"-"` // 本次扫描来源只用于关联下载批次，不进入内容索引。
 	ChannelID      string        `json:"channel_id,omitempty"`
 	Availability   string        `json:"availability,omitempty"`
 	MediaType      string        `json:"media_type,omitempty"`
@@ -96,6 +97,8 @@ func (e *PaidVideoSkippedError) Error() string {
 // queued、running、completed、failed、cancelled、skipped 是持久任务状态。
 // Task 的状态持久化，运行日志单独存储于运行数据目录。
 type Task struct {
+	QueuedAt       time.Time          `json:"queued_at,omitempty"` // 重试仍保留任务 ID，但使用本次入队时间排序。
+	SourceTaskID   int64              `json:"source_task_id,omitempty"`
 	Progress       []TransferProgress `json:"progress,omitempty"`
 	ID             int64              `json:"id"`
 	SubscriptionID int64              `json:"subscription_id"`
@@ -107,6 +110,15 @@ type Task struct {
 	CreatedAt      time.Time          `json:"created_at"`
 	StartedAt      time.Time          `json:"started_at"`
 	FinishedAt     time.Time          `json:"finished_at"`
+}
+
+// PlatformRun 保存平台当前批次；重启后先继续该批次，再处理等待的博主。
+type PlatformRun struct {
+	Platform       string    `json:"platform"`
+	SubscriptionID int64     `json:"subscription_id"`
+	ScanTaskID     int64     `json:"scan_task_id"`
+	ScanTaskIDs    []int64   `json:"scan_task_ids,omitempty"` // 当前批次已有扫描和下载来源，后续扫描不加入。
+	StartedAt      time.Time `json:"started_at"`
 }
 
 // TaskContentRow 将任务与详情展示所需的内容快照关联。
@@ -219,6 +231,8 @@ type DownloadHistoryRepository interface {
 
 // Repository 隔离持久化；不采用数据库外键或触发器。
 type Repository interface {
+	PlatformRuns() ([]PlatformRun, error)
+	SavePlatformRun(PlatformRun) error
 	DownloadHistoryRepository
 	PaidVideoPolicy
 	BlockPaidVideos(string, int64) error

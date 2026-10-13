@@ -250,6 +250,7 @@ func TestTaskGroupProjectionPreservesCurrentBatch(t *testing.T) {
 			task.Status = "running"
 			task.CreatedAt = base.Add(5 * time.Minute)
 		}
+		task.QueuedAt = task.CreatedAt // 固定快照中的入队时间也使用测试时钟。
 		if err := a.Repo.SaveTask(&task); err != nil {
 			t.Fatal(err)
 		}
@@ -259,6 +260,7 @@ func TestTaskGroupProjectionPreservesCurrentBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstScan.Status, firstScan.CreatedAt = "completed", base.Add(6*time.Minute)
+	firstScan.QueuedAt = firstScan.CreatedAt
 	if err := a.Repo.SaveTask(&firstScan); err != nil {
 		t.Fatal(err)
 	}
@@ -267,6 +269,7 @@ func TestTaskGroupProjectionPreservesCurrentBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	latestScan.Status, latestScan.Error, latestScan.CreatedAt = "failed", "scan error", base.Add(7*time.Minute)
+	latestScan.QueuedAt = latestScan.CreatedAt
 	if err := a.Repo.SaveTask(&latestScan); err != nil {
 		t.Fatal(err)
 	}

@@ -13,6 +13,7 @@ func (s *Store) TaskGroupStats(limit int) ([]domain.TaskGroupStats, error) {
  SELECT id, subscription_id, content_id, status,
         COALESCE(json_extract(payload,'$.error'),'') AS error,
         max(COALESCE(json_extract(payload,'$.created_at'),''),
+			COALESCE(json_extract(payload,'$.queued_at'),''),
             COALESCE(json_extract(payload,'$.started_at'),''),
             COALESCE(json_extract(payload,'$.finished_at'),'')) AS changed_at
  FROM tasks

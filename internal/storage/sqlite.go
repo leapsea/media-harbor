@@ -83,6 +83,7 @@ CREATE INDEX IF NOT EXISTS tasks_subscription_id ON tasks(subscription_id,id);
 CREATE UNIQUE INDEX IF NOT EXISTS task_active ON tasks(subscription_id,content_id,kind) WHERE status IN ('queued','running');
 CREATE TABLE IF NOT EXISTS app_settings(id INTEGER PRIMARY KEY,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS engine_versions(name TEXT PRIMARY KEY,version TEXT NOT NULL,checked_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS platform_runs(platform TEXT PRIMARY KEY,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS youtube_paid_blocks(channel_id TEXT PRIMARY KEY,failed_task_id INTEGER NOT NULL);
 `
 
@@ -284,6 +285,7 @@ func insertTask(tx *sql.Tx, t *domain.Task) error {
 // Enqueue 为手动或定时扫描创建一条待执行记录。
 func (s *Store) Enqueue(sid, cid int64, kind string) (domain.Task, error) {
 	t := domain.Task{SubscriptionID: sid, ContentID: cid, Kind: kind, Status: "queued", CreatedAt: time.Now()}
+	t.QueuedAt = t.CreatedAt
 	tx, e := s.db.Begin()
 	if e != nil {
 		return t, e
@@ -334,6 +336,7 @@ func (s *Store) AddContentAndTask(sid int64, v domain.Content) error {
 		return e
 	}
 	t := domain.Task{SubscriptionID: sid, ContentID: v.ID, Kind: "download", Status: "queued", CreatedAt: time.Now()}
+	t.QueuedAt, t.SourceTaskID = t.CreatedAt, v.SourceTaskID
 	if e = insertTask(tx, &t); e != nil {
 		return e
 	}
