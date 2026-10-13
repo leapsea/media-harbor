@@ -227,14 +227,14 @@ func TestScanQueueReportsRunningConsumer(t *testing.T) {
 	task := tasks[0]
 	task.Status = "running"
 	task.StartedAt = time.Now()
-	task.Progress = []domain.TransferProgress{{Kind: "media", Status: "running", BytesDone: 512, BytesTotal: 1024, Percent: 50}}
+	task.Progress = []domain.TransferProgress{{Kind: "media", Status: "running", Phase: "平台返回 429，限流等待", BytesDone: 512, BytesTotal: 1024, Percent: 50}}
 	if err := a.Repo.SaveTask(&task); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	var line string
 	err := a.waitScanQueue(ctx, sub.ID, domain.Content{RemoteID: "new"}, false, func(message string) { line = message; cancel() })
-	if !errors.Is(err, context.Canceled) || !strings.Contains(line, "待执行 31 · 运行 1") || !strings.Contains(line, fmt.Sprintf("#%d", task.ID)) || !strings.Contains(line, "media 50.0%") {
+	if !errors.Is(err, context.Canceled) || !strings.Contains(line, "待执行 31 · 运行 1") || !strings.Contains(line, fmt.Sprintf("#%d", task.ID)) || !strings.Contains(line, "media 50.0%") || !strings.Contains(line, "429，限流等待") {
 		t.Fatalf("缺失消费者诊断：%s %v", line, err)
 	}
 }

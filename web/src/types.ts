@@ -55,6 +55,8 @@ export interface TaskGroup {
 
 /** 进度来自下载器实际传输和产物大小，未知大小保持为零。 */
 export interface DetailPart {
+	/** 当前执行阶段可用于解释零字节进度和平台等待。 */
+	phase?: string
  kind: string; status: string; bytes_total: number; bytes_done: number; percent: number
  error?: string; task_id: number; labels: string[]; number?: number
 }

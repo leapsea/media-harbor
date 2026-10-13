@@ -14,6 +14,15 @@ import (
 // DownloadLogInterval 限制重复进度输出，不影响错误和最终结果。
 const DownloadLogInterval = time.Second
 
+// InstagramSourceCacheCapacity 只保留近期解析结果，避免随全量历史无限增长。
+const InstagramSourceCacheCapacity = 128
+
+// InstagramSourceCacheTTL 限制签名地址复用时间；地址失效时另行刷新一次。
+const InstagramSourceCacheTTL = 15 * time.Minute
+
+// InstagramMediaAttempts 只在媒体地址明确失效时重新解析，不放大 429 请求。
+const InstagramMediaAttempts = 2
+
 // YouTubeMediaAttempts 在媒体地址被拒绝后重新解析一次，不反复重试同一个签名地址。
 const YouTubeMediaAttempts = 2
 

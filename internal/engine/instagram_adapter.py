@@ -1,6 +1,7 @@
 """详情接口重定向时，复用帖子网页中的原始媒体对象。"""
 import json
 import re
+import time
 
 
 def instagram_web_post(page, shortcode):
@@ -37,8 +38,13 @@ def install_instagram_adapter():
     original_media = InstagramAPI.media
 
     def media(self, shortcode):
+        started = time.monotonic()
+        self.extractor.log.info("帖子 %s：开始请求媒体接口", shortcode)
         try:
-            yield from original_media(self, shortcode)
+            for post in original_media(self, shortcode):
+                self.extractor.log.info("帖子 %s：媒体接口解析成功；耗时 %.3fs；媒体 %s 项", shortcode,
+                                       time.monotonic()-started, len(post.get("carousel_media") or [post]))
+                yield post
             return
         except exception.AbortExtraction as error:
             if "HTTP redirect to home page" not in str(error):
@@ -60,6 +66,8 @@ def install_instagram_adapter():
         }
         extractor.log.info("帖子 %s：媒体接口重定向，改从帖子网页解析", shortcode)
         response = extractor.request(address, headers=headers)
+        extractor.log.info("帖子 %s：网页响应状态 %s；接口与网页累计耗时 %.3fs", shortcode,
+                           response.status_code, time.monotonic()-started)
         post = instagram_web_post(response.text, shortcode)
         if not post:
             raise exception.AbortExtraction(

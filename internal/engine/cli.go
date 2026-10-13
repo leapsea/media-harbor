@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -21,6 +20,12 @@ import (
 type CLI struct {
 	DataDir    string
 	PaidPolicy domain.PaidVideoPolicy
+	instagram  *instagramSourceCache
+}
+
+// NewCLI 将媒体快照限定在当前引擎实例，不跨账号或写入持久数据库。
+func NewCLI(dataDir string, policy domain.PaidVideoPolicy) CLI {
+	return CLI{DataDir: dataDir, PaidPolicy: policy, instagram: newInstagramSourceCache()}
 }
 
 // run 使用 Context 使任务取消和服务停止能终止下载进程。
@@ -86,6 +91,14 @@ func (c CLI) common(s domain.Subscription) []string {
 // 非零退出码仍允许返回已解析的部分结果。
 // 服务层同时持久化发现内容并标记扫描失败。
 func (c CLI) Scan(ctx context.Context, s domain.Subscription, itemLimit int, log func(string), emit func(domain.ScanResult) error) (domain.ScanResult, error) {
+	if s.Platform == "instagram" && c.instagram != nil {
+		deliver := emit
+		emit = func(batch domain.ScanResult) error {
+			// 入队前留下地址，下载消费者无需再次解析整个帖子。
+			c.instagram.put(batch)
+			return deliver(batch)
+		}
+	}
 	args := c.common(s)
 	name := "yt-dlp"
 	if s.Platform == "youtube" {
@@ -181,7 +194,7 @@ func parseInstagram(raw []byte) (domain.ScanResult, error) {
 	if e := json.Unmarshal(raw, &rows); e != nil {
 		return domain.ScanResult{}, e
 	}
-	result := domain.ScanResult{Items: []domain.Content{}}
+	result := domain.ScanResult{Items: []domain.Content{}, MediaSources: map[string]domain.MediaSource{}}
 	var scanErr error
 	for _, row := range rows {
 		if len(row) < 2 {
@@ -240,7 +253,13 @@ func parseInstagram(raw []byte) (domain.ScanResult, error) {
 		if str(m["extension"]) == "mp4" || str(m["video_url"]) != "" {
 			mediaType = "video"
 		}
-		result.Items = append(result.Items, domain.Content{RemoteID: id + "-" + strconv.Itoa(num), URL: u, Title: str(m["description"]), Published: date, Asset: num, MediaType: mediaType})
+		remoteID := id + "-" + strconv.Itoa(num)
+		result.Items = append(result.Items, domain.Content{RemoteID: remoteID, URL: u, Title: str(m["description"]), Published: date, Asset: num, MediaType: mediaType})
+		var sourceURL string
+		if err := json.Unmarshal(row[1], &sourceURL); err != nil {
+			return result, err
+		}
+		result.MediaSources[remoteID] = domain.MediaSource{URL: sourceURL, Metadata: m}
 	}
 	return result, scanErr
 }
@@ -271,36 +290,9 @@ func (c CLI) Download(ctx context.Context, s domain.Subscription, item domain.Co
 	if e := os.MkdirAll(dir, 0755); e != nil {
 		return e
 	}
-	args := c.common(s)
 	inventory := Inventory(item, dir)
 	if s.Platform == "instagram" {
-		if inventory.Video() != "" || inventory.Thumbnail() {
-			log("复用已下载的 Instagram 媒体")
-			transfer(log, completedTransfer("media", inventory))
-			return nil
-		}
-		args = append(args, "-D", dir, "-f", "{post_id}_{num}.{extension}", "--filter", "num == "+strconv.Itoa(item.Asset), "--", item.URL)
-		var output strings.Builder
-		var outputMu sync.Mutex
-		progressOutput := transferLog(log, "media", 0)
-		// stdout 与 stderr 由不同复制协程回调，共享诊断文本需要同步。
-		transfer(log, domain.TransferProgress{Kind: "media", Status: "running"})
-		args = append([]string{"-u", "-c", instagramScript(instagramProgress + "\ninstall_instagram_progress()\nimport gallery_dl\ngallery_dl.main()\n")}, args...)
-		_, e := run(ctx, "python3", args, func(message string) {
-			outputMu.Lock()
-			output.WriteString(message)
-			outputMu.Unlock()
-			progressOutput(message)
-		}, false)
-		if e != nil && strings.Contains(output.String(), "redirect to login page") {
-			return fmt.Errorf("Instagram 下载需要登录：请在系统设置中编辑并保存有效 Cookie：%w", e)
-		}
-		if e != nil {
-			transfer(log, domain.TransferProgress{Kind: "media", Status: "failed", Error: e.Error()})
-		} else {
-			transfer(log, completedTransfer("media", Inventory(item, dir)))
-		}
-		return e
+		return c.downloadInstagram(ctx, s, item, dir, inventory, log)
 	}
 	return c.downloadYouTube(ctx, s, item, o, dir, log)
 }

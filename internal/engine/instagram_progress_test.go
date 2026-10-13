@@ -67,7 +67,14 @@ gallery_dl.main()
 	if err != nil {
 		t.Fatalf("%v\n%s", err, output.String())
 	}
-	if len(events) == 0 || events[0].BytesTotal != 6*1024*1024 || events[0].BytesDone == 0 || events[0].BytesDone > events[0].BytesTotal {
+	// 响应头阶段允许零字节；随后必须观察到实际传输字节，且不能超过响应总量。
+	var received bool
+	for _, event := range events {
+		if event.BytesTotal == 6*1024*1024 && event.BytesDone > 0 && event.BytesDone <= event.BytesTotal {
+			received = true
+		}
+	}
+	if !received {
 		t.Fatalf("%+v", events)
 	}
 	info, err := os.Stat(filepath.Join(root, "fixture_1.gif"))

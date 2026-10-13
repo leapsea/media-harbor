@@ -132,6 +132,7 @@ type TaskGroupStats struct {
 // TransferProgress 是一个视频或帖子媒体的实际传输状态，不单独占用队列名额。
 type TransferProgress struct {
 	Title      string  `json:"title,omitempty"`
+	Phase      string  `json:"phase,omitempty"` // 等待、解析与传输分开，零字节不等于正在下载。
 	Kind       string  `json:"kind"`
 	Status     string  `json:"status"`
 	BytesTotal int64   `json:"bytes_total"`
@@ -168,9 +169,16 @@ type Settings struct {
 
 // ScanResult 仅表示引擎在本次扫描中实际可获取的内容。
 type ScanResult struct {
-	StableID    string
-	CurrentName string
-	Items       []Content
+	StableID     string
+	CurrentName  string
+	Items        []Content
+	MediaSources map[string]MediaSource // 引擎会话内复用，不写入内容索引或公开接口。
+}
+
+// MediaSource 是已解析媒体的临时下载描述，保留下载器需要的清单与请求头。
+type MediaSource struct {
+	URL      string         `json:"url"`
+	Metadata map[string]any `json:"metadata"`
 }
 
 // Engine 把扫描及下载能力隔离，应用服务无需依赖命令行实现。

@@ -16,9 +16,19 @@ class StreamingJob(job.DataJob):
         self.data = self.data_urls = self.data_post = self.data_meta = DiscardList()
         self.jsonl = True
         self.out = self.emit
+        self.metadata_filter = self.filter
+        self.filter = self.media_filter
 
     def emit(self, message):
         print(json.dumps(message, default=str), flush=True)
+
+    def media_filter(self, metadata):
+        # DataJob 默认移除内部字段；媒体复用必须保留原下载器的请求头和视频清单。
+        result = self.metadata_filter(metadata)
+        for key in ("_http_headers", "_ytdl_manifest", "_ytdl_manifest_data", "_fallback"):
+            if key in metadata:
+                result[key] = metadata[key]
+        return result
 
     def run(self):
         result = super().run()

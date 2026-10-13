@@ -156,6 +156,9 @@ func (a *App) waitScanQueue(ctx context.Context, sid int64, item domain.Content,
 				for _, progress := range task.Progress {
 					if progress.Status == "running" {
 						stage = fmt.Sprintf("%s %.1f%% (%d/%d 字节)", progress.Kind, progress.Percent, progress.BytesDone, progress.BytesTotal)
+						if progress.Phase != "" {
+							stage = progress.Phase + " · " + stage
+						}
 						break
 					}
 				}
