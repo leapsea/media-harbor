@@ -10,6 +10,7 @@ import (
 	"media-harbor/internal/credentials"
 	"media-harbor/internal/domain"
 	"media-harbor/internal/engine"
+	"media-harbor/internal/logtext"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -638,6 +639,7 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 	}
 	defer a.endTaskLog(s, logStarted, writer)
 	cookie, _ := a.Credentials.Status(s.Platform)
+	presentation := newTaskLogPresentation(time.Now())
 	log := func(msg string) {
 		if reason := credentials.FailureReason(s.Platform, msg); cookie.Usable && reason != "" {
 			if changed, err := a.Credentials.Disable(s.Platform, cookie.Revision, reason); changed && err == nil {
@@ -648,7 +650,10 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 		if a.recordProgress(t.ID, msg) {
 			return
 		}
-		a.writeTaskLog(writer, t, msg)
+		if message := presentation.message(msg, time.Now()); message != "" {
+			a.writeTaskLog(writer, t, message)
+		}
+		// 历史日志直接写入所有SDK提示，同一元数据翻译警告会逐视频重复输出。
 	}
 	started := time.Now()
 	if t.ContentID == 0 {
@@ -664,7 +669,10 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 		log("解析订阅地址：" + s.URL)
 	}
 	defer func() {
-		log(fmt.Sprintf("执行结束；耗时 %s", time.Since(started).Round(time.Millisecond)))
+		for _, message := range presentation.repeatedWarnings() {
+			a.writeTaskLog(writer, t, message)
+		}
+		log("[执行结束] 耗时 " + logtext.Duration(time.Since(started)))
 	}()
 	if t.ContentID == 0 {
 		if t.Kind == "catchup" {
@@ -697,8 +705,11 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 					// 历史资产：仅以 !queueWaiting.Load() 判断是否输出平台等待日志。
 					sleeping, _ := a.Repo.Settings()
 					if !queueWaiting.Load() && sleeping.Sleep.Until(s.Platform, time.Now()).IsZero() {
-						log(fmt.Sprintf("等待平台返回媒体，扫描已运行 %s", time.Since(started).Round(time.Second)))
+						if message := presentation.idleMessage(time.Now(), started); message != "" {
+							log(message)
+						}
 					}
+					// 历史日志每5秒输出“等待平台返回媒体”，与请求间隔和请求响应重复。
 				}
 			}
 		}()
@@ -747,8 +758,10 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 				pending += w
 				skipped += v
 				discovered++
-				// 原帖地址放在多行正文之前，每个资源的首行日志都能直接溯源。
-				log(fmt.Sprintf("解析帖子 %s；帖子地址：%s；标题：%s；资源序号 %d；发布日期 %s；累计资源 %d 项；新增 %d 项；已存在 %d 项", item.RemoteID, item.URL, item.Title, item.Asset, publicationLabel(item.Published), discovered, added, skipped+completed+pending))
+				// 媒体身份放在首行，标题与地址独立展示并保留同一任务编号。
+				presentation.progress(discovered, added, skipped+completed+pending)
+				log(scanItemLog(s.Platform, item, x, y, z, w, v, discovered, added, skipped+completed+pending))
+				// 历史日志将地址、标题和统计挤在一行，并为YouTube输出“资源序号0”。
 			}
 			return nil
 		}
@@ -784,11 +797,8 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 			}
 		}
 		a.mu.Unlock()
-		if t.Kind == "catchup" {
-			log(fmt.Sprintf("补全下载发现 %d 项；新增下载 %d 项；重新排队 %d 项；已完成跳过 %d 项；处理中跳过 %d 项", discovered, added, retried, completed, pending))
-		} else {
-			log(fmt.Sprintf("扫描发现 %d 项；新增下载 %d 项；已存在跳过 %d 项", discovered, added, skipped))
-		}
+		log(fmt.Sprintf("[扫描汇总] 发现 %d / 新增 %d / 重新排队 %d / 已存在 %d · 已完成 %d / 处理中 %d / 重复记录 %d · 耗时 %s", discovered, added, retried, completed+pending+skipped, completed, pending, skipped, logtext.Duration(time.Since(started))))
+		// 历史汇总只将 skipped 计入“已存在”，未包含完成项和处理中条目。
 		// 测试扫描的十条结果不能在日志中声称完整获取全部历史。
 		if settings.Debug.TestItemLimit > 0 {
 			log("本次为测试批次，不代表完整历史扫描")
@@ -833,8 +843,8 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 		return
 	}
 	dir := a.WorkPath(t)
-	log(fmt.Sprintf("开始下载帖子：%s · %s；资源序号 %d；发布日期 %s", c.RemoteID, c.Title, c.Asset, publicationLabel(c.Published)))
-	log("请求资源地址：" + c.URL)
+	log(mediaItemLog(s.Platform, c, "开始下载"))
+	// 历史日志将视频称作帖子，并输出无意义的资源序号零与未知发布日期。
 	e = a.Engine.Download(ctx, s, c, options, dir, log)
 	log(fmt.Sprintf("下载引擎已返回；成功 %t；取消 %t；准备读取产物并提交完成状态", e == nil, ctx.Err() != nil))
 	downloadErr := e

@@ -182,7 +182,7 @@ def run():
             assert catchup == {code: 1 for code in ["new2", "new1", "cached", "oldgap", "older"]}, catchup
             assert missing.exists(), "补全没有恢复缺失文件"
             log = fixture.request(f"/subscriptions/{sub['id']}/log")["log"]
-            assert "增量扫描命中本地缓存" in log and "补全下载发现" in log, log
+            assert "增量扫描命中本地缓存" in log and "[扫描汇总]" in log, log
             report[platform] = {"incremental_checked": incremental, "no_new_checked": unchanged,
                                 "catchup_checked": catchup, "catchup_restores_missing_file": True}
             print(f"PASS {platform}: 增量只检查新项和缓存边界；无新增只检查首项；补全检查历史并恢复缺失文件", flush=True)

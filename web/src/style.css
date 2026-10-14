@@ -144,7 +144,8 @@ textarea{resize:vertical;margin-bottom:8px;line-height:1.5}
 .dryrun-backdrop .form-actions{flex:0 0 auto;align-items:center}
 .dryrun-backdrop .form-actions>span{margin-right:auto;font-size:13px}
 .log-modal>.section-top{flex:0 0 auto}
-.log-modal .log-content{flex:1 1 auto;min-height:0;overflow:auto;margin:12px 0 0;overscroll-behavior:contain;resize:none;height:55vh;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6;white-space:pre;tab-size:2}
+/* 日志按可用宽度折行，长地址也能在竖屏阅读；复制仍保留原始行。历史样式 white-space:pre。 */
+.log-modal .log-content{flex:1 1 auto;min-height:0;overflow:auto;margin:12px 0 0;overscroll-behavior:contain;resize:none;height:55vh;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;tab-size:2}
 .youtube-symbol{color:#cf6344}
 .instagram-symbol{color:#9b6492;font-size:18px}
 .chosen .platform-check{visibility:visible}

@@ -65,7 +65,7 @@ func TestLimitedScan(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 扫描日志说明实际处理数量和队列结果，不展示执行次数。
-	for _, want := range []string{"累计资源 10 项", "新增下载 0 项；已存在跳过 10 项", "执行结束"} {
+	for _, want := range []string{"累计发现 10", "新增 0 / 重新排队 0 / 已存在 10", "执行结束"} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("missing %s: %s", want, raw)
 		}
@@ -151,7 +151,7 @@ func TestGroupScope(t *testing.T) {
 	}
 	// 聚合日志只包含本次十条，其他订阅及积压不能混入。
 	log, err := a.GroupLog(s.ID)
-	if err != nil || !strings.Contains(log, "开始下载帖子：1") || strings.Contains(log, "第 1 次执行") {
+	if err != nil || !strings.Contains(log, "1 · 开始下载") || strings.Contains(log, "第 1 次执行") {
 		t.Fatalf("log=%s err=%v", log, err)
 	}
 }
@@ -165,7 +165,7 @@ func TestScanWaitingLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), config.ScanLogInterval+time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), config.ScanLogIdleInterval+config.ScanLogInterval+time.Second)
 	defer cancel()
 	if err = a.tick(ctx); err != nil {
 		t.Fatal(err)
@@ -175,7 +175,7 @@ func TestScanWaitingLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "等待平台返回媒体，扫描已运行") || !strings.Contains(string(raw), "执行结束") {
+	if !strings.Contains(string(raw), "[扫描进度]") || !strings.Contains(string(raw), "执行结束") {
 		t.Fatalf("log=%s", raw)
 	}
 }

@@ -195,9 +195,13 @@ func (c CLI) youtubeMetadata(ctx context.Context, sub domain.Subscription, item 
 			return entry.raw, entry.err
 		}
 	}
-	log("生产者：解析 YouTube 格式与发布日期；媒体 " + item.RemoteID)
+	log("[视频解析] " + item.RemoteID + " · 获取格式与发布日期")
+	// 原文字“生产者：解析YouTube格式与发布日期”未在请求汇总中保留视频身份。
 	args := append(c.youtubeMetadataArgs(sub, options), "--", item.URL)
-	raw, err := c.runYouTube(ctx, args, log, true, "metadata")
+	raw, err := c.runYouTube(withRequestLogMedia(ctx, item.RemoteID), args, log, true, "metadata")
+	if err == nil {
+		logYouTubeFormats(raw, item.RemoteID, log)
+	}
 	// 主动取消不发布失败快照，后续任务仍能接管同一视频。
 	if p != nil && ctx.Err() == nil {
 		p.mu.Lock()

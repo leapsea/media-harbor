@@ -458,7 +458,9 @@ func youtubeArgs(o domain.YouTubeOptions, dir string) []string {
 	a := []string{"--no-playlist", "--newline", "-o", filepath.Join(dir, "%(title)s-%(id)s.%(ext)s"), "--concurrent-fragments", strconv.Itoa(o.Fragments)}
 	if o.Video || o.ExtractAudio {
 		// 画质选择与 MP4 封装独立：合并或重封装，不重新编码视频。
-		a = append(a, "-f", o.Format, "--merge-output-format", "mp4", "--remux-video", "mp4")
+		a = append(a, youtubeFormatArgs(o.Format)...)
+		a = append(a, "--merge-output-format", "mp4", "--remux-video", "mp4")
+		// 历史资产：-f o.Format 与 MP4 封装一起传入，未显式指定分辨率排序。
 	} else {
 		a = append(a, "--skip-download")
 	}

@@ -9,6 +9,7 @@ import (
 	"media-harbor/internal/config"
 	"media-harbor/internal/credentials"
 	"media-harbor/internal/domain"
+	"media-harbor/internal/logtext"
 	"net"
 	"net/http"
 	"strconv"
@@ -44,7 +45,10 @@ type instagramOperation struct {
 	cancel     context.CancelFunc
 	log        func(string)
 	stage      string
+	mediaID    string
 	leases     map[string]func()
+	timings    map[string]requestTiming
+	stats      requestLogStats
 }
 
 // instagramRoundTripper 使 Go 的公开作者网页请求与 SDK 使用同一个平台许可。
@@ -96,6 +100,8 @@ func (r *instagramRequests) wait(ctx context.Context, log func(string), stage st
 		return nil, err
 	}
 	// SDK 正常结束、异常与进程取消可能同时归还同一许可，归还必须幂等。
+	var lastReport time.Time
+	var lastReason string
 	for {
 		if err := r.checkCredentials(); err != nil {
 			release()
@@ -132,8 +138,16 @@ func (r *instagramRequests) wait(ctx context.Context, log func(string), stage st
 		changed := r.changed
 		used, maximum, window := len(r.history), r.maximum, r.window
 		r.mu.Unlock()
-		message := fmt.Sprintf("%s 请求统一等待；阶段 %s；原因 %s；剩余 %s；窗口 %d/%d · %s", r.platform, stage, reason, left.Round(time.Millisecond), used, maximum, window)
-		log(message)
+		message := fmt.Sprintf("[请求等待] %s · %s · %s · 约 %s 后继续", r.platform, logtext.Stage(stage), reason, logtext.Duration(left))
+		if maximum > 0 {
+			message += fmt.Sprintf(" · 窗口 %d/%d 次（%s）", used, maximum, logtext.Duration(window))
+		}
+		// 检查频率保持原值；只控制文字频率，原因改变时立即输出。
+		if left >= config.RequestWaitLogThreshold && (lastReport.IsZero() || reason != lastReason || time.Since(lastReport) >= config.RequestWaitLogInterval) {
+			log(message)
+			lastReport, lastReason = time.Now(), reason
+		}
+		// 历史文字：请求统一等待；阶段 metadata；许可编号与末尾毫秒倒计时逐行输出。
 		if stage == "media" {
 			// 下载保持运行状态，界面显示等待原因而不是误报零字节传输。
 			transfer(log, domain.TransferProgress{Kind: "media", Status: "running", Phase: message})
@@ -180,6 +194,7 @@ func (r *instagramRequests) rateLimited(after string) time.Duration {
 // waitMedia 只遵守平台冷却，不占单生产者许可或解析请求预算。
 // 已开始的流读取继续传输；下一次连接、重试可取消且按最新429期限等待。
 func (r *instagramRequests) waitMedia(ctx context.Context, log func(string)) error {
+	var lastReport time.Time
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -193,7 +208,10 @@ func (r *instagramRequests) waitMedia(ctx context.Context, log func(string)) err
 		if left <= 0 {
 			return nil
 		}
-		log(fmt.Sprintf("%s 请求统一等待；阶段 media；原因 平台 429 统一冷却；剩余 %s", r.platform, left.Round(time.Millisecond)))
+		if lastReport.IsZero() || time.Since(lastReport) >= config.RequestWaitLogInterval {
+			log(fmt.Sprintf("[请求等待] %s · 媒体下载 · 429 限流冷却 · 约 %s 后继续", r.platform, logtext.Duration(left)))
+			lastReport = time.Now()
+		}
 		timer := time.NewTimer(min(left, config.ScanLogInterval))
 		select {
 		case <-timer.C:
@@ -235,13 +253,13 @@ func (r *instagramRequests) begin(ctx context.Context, stage string, log func(st
 	}
 	token := hex.EncodeToString(tokenBytes[:])
 	ctx, cancel := context.WithCancel(ctx)
-	op := &instagramOperation{revision: cookie.Revision, usesCookie: cookie.Usable, ctx: ctx, cancel: cancel, log: log, stage: stage, leases: map[string]func(){}}
+	op := &instagramOperation{revision: cookie.Revision, usesCookie: cookie.Usable, ctx: ctx, cancel: cancel, log: log, stage: stage, leases: map[string]func(){}, timings: map[string]requestTiming{}}
+	op.mediaID, _ = ctx.Value(requestLogMediaKey{}).(string)
 	r.ops[token] = op
 	end := func() {
 		// 先取消等待者再清理许可，异常退出也不会阻挡下一批请求。
 		cancel()
 		r.mu.Lock()
-		defer r.mu.Unlock()
 		for _, release := range op.leases {
 			release()
 		}
@@ -250,6 +268,12 @@ func (r *instagramRequests) begin(ctx context.Context, stage string, log func(st
 			// 保留平台时钟，但关闭闲置端口，不遗留后台控制服务。
 			_ = r.server.Close()
 			r.server = nil
+		}
+		stats, unfinished := op.stats, len(op.timings)
+		r.mu.Unlock()
+		// 日志回调不持平台锁，避免与保存设置或进度回写形成相反锁顺序。
+		if stats.count > 0 {
+			op.log(stats.message(r.platform, op.stage, op.mediaID, unfinished))
 		}
 	}
 	env := []string{"MEDIA_HARBOR_CONTROL=" + r.address, "MEDIA_HARBOR_TOKEN=" + token, "MEDIA_HARBOR_STAGE=" + stage}
@@ -315,8 +339,13 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		op.leases[lease] = release
+		granted := time.Now()
+		op.timings[lease] = requestTiming{started: granted}
+		op.stats.count++
+		op.stats.waited += granted.Sub(started)
 		r.mu.Unlock()
-		op.log(fmt.Sprintf("%s HTTP 请求获准；阶段 %s；媒体传输 %t；许可 %s；等待 %s", r.platform, op.stage, event.Media, lease, time.Since(started).Round(time.Millisecond)))
+		// 历史日志逐次输出 HTTP 请求获准、媒体传输布尔值和长许可编号。
+		// 正常请求只计入阶段汇总，许可仍用于内部关联与归还。
 		_ = json.NewEncoder(w).Encode(map[string]string{"lease": lease})
 	case "release":
 		// 即使 SDK 关闭或请求异常，也归还许可；成功响应才生成传输起点。
@@ -327,6 +356,17 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 		r.mu.Lock()
 		release := op.leases[event.Lease]
 		delete(op.leases, event.Lease)
+		if timing, exists := op.timings[event.Lease]; exists {
+			op.stats.response += time.Since(timing.started)
+			if event.Status >= 200 && event.Status < 300 {
+				op.stats.success++
+			} else if event.Status >= 300 && event.Status < 400 {
+				op.stats.redirected++
+			} else {
+				op.stats.failed++
+			}
+			delete(op.timings, event.Lease)
+		}
 		r.mu.Unlock()
 		if release != nil {
 			// 头部已经返回，后续数据读取保留原下载器的流式与断点语义。
@@ -370,7 +410,13 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 				}
 			}
 		}
-		op.log(fmt.Sprintf("%s HTTP 响应；阶段 %s；许可 %s；状态 %d", r.platform, op.stage, event.Lease, event.Status))
+		// 异常逐条保留；成功响应由本次阶段的请求汇总代替重复的200行。
+		if event.Status == 0 {
+			op.log(fmt.Sprintf("[请求异常] %s · %s · 连接失败，未收到 HTTP 状态", r.platform, logtext.Stage(op.stage)))
+		} else if event.Status >= 400 {
+			op.log(fmt.Sprintf("[请求异常] %s · %s · HTTP %d", r.platform, logtext.Stage(op.stage), event.Status))
+		}
+		// 历史日志：HTTP 响应；阶段 metadata；许可 179...；状态 200。
 		if op.stage == "media" && r.platform == "Instagram" {
 			op.log(fmt.Sprintf("媒体 HTTP 响应；状态 %d", event.Status))
 			if event.Status == 401 || event.Status == 403 || event.Status == 404 || event.Status == 410 {

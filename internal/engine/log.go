@@ -63,6 +63,9 @@ func (w *logWriter) flush() { w.output.line(w.pending); w.pending = "" }
 
 // youtubeDownloadError 保留原始错误链，明确失败阶段和流进度语义。
 func youtubeDownloadError(stage string, err error) error {
+	if strings.Contains(err.Error(), "Requested format is not available") {
+		return fmt.Errorf("YouTube %s失败：重新解析后仍无符合画质设置的可下载格式，请查看格式解析及平台警告日志：%w", stage, err)
+	}
 	if strings.Contains(err.Error(), "403") {
 		return fmt.Errorf("YouTube %s失败：平台拒绝媒体请求（HTTP 403）；单个流达到 100%% 不代表任务完成，可重试以重新获取媒体地址：%w", stage, err)
 	}

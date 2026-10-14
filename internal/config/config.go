@@ -44,10 +44,13 @@ func seconds(key string, fallback time.Duration) time.Duration {
 	return fallback
 }
 
-// YouTubeMediaAttempts 在媒体地址被拒绝后重新解析一次，不反复重试同一个签名地址。
+// YouTubeMediaAttempts 在地址被拒绝或格式不可用后重新解析一次，不重复使用失效清单。
 const YouTubeMediaAttempts = 2
 
-// YouTubeMetadataCacheTTL 保留近期格式清单，403 仍走串行生产者刷新。
+// YouTubeFormatSort 以视频存在性、分辨率、帧率为顺序，不让来源优先级压过尺寸。
+const YouTubeFormatSort = "hasvid,res,fps"
+
+// YouTubeMetadataCacheTTL 保留近期格式清单，403 与格式不可用仍走串行生产者刷新。
 const YouTubeMetadataCacheTTL = 15 * time.Minute
 const YouTubeMetadataCacheCapacity = 128
 
@@ -65,6 +68,16 @@ const TaskDetailsSlowThreshold = 500 * time.Millisecond
 
 // ScanLogInterval 控制扫描等待期间的可见进度频率。
 const ScanLogInterval = 5 * time.Second
+
+// ScanLogIdleInterval 仅在长时间没有日志进展时补充扫描状态，避免与请求等待重复。
+const ScanLogIdleInterval = 15 * time.Second
+
+// RequestWaitLogInterval 保留长冷却进度，同一次等待不再输出末尾毫秒倒计时。
+const RequestWaitLogInterval = 15 * time.Second
+const RequestWaitLogThreshold = time.Second
+
+// TaskWarningLimit 限制单任务的警告去重记录；超过范围的新警告仍完整输出。
+const TaskWarningLimit = 128
 
 // LogTailReadChunkBytes 按块从文件尾部读取，日志窗口不扫描全部历史内容。
 const LogTailReadChunkBytes = 32 * 1024

@@ -56,7 +56,7 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 	transfer(log, domain.TransferProgress{Kind: "video", Status: "queued", Title: PublicationTitle(dir), BytesTotal: youtubeTransferSize(metadata, "video")})
 	// load-info-json 只读取本次媒体对象，下载格式仍由各阶段的选项决定。
 	cached := append(append([]string{}, common...), "--load-info-json", metadataPath)
-	// 403 需要重新取得媒体地址，普通 HTTP 重试不会刷新签名。
+	// 403 或不可用的格式清单需要重新解析；普通 HTTP 重试不会刷新签名与格式。
 	media := func(stage string, stageArgs []string) error {
 		kind := map[string]string{"主视频": "video", "字幕": "subtitles", "缩略图": "thumbnail", "额外音频": "audio"}[stage]
 		total := youtubeTransferSize(metadata, kind)
@@ -65,10 +65,16 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 			if err == nil {
 				return nil
 			}
-			if ctx.Err() != nil || !strings.Contains(err.Error(), "HTTP Error 403") || attempt == config.YouTubeMediaAttempts {
+			refreshFormat := strings.Contains(err.Error(), "Requested format is not available")
+			if ctx.Err() != nil || (!strings.Contains(err.Error(), "HTTP Error 403") && !refreshFormat) || attempt == config.YouTubeMediaAttempts {
 				return youtubeDownloadError(stage, err)
 			}
-			log(fmt.Sprintf("%s：媒体请求 403；重新解析资源地址后重试", stage))
+			// 历史资产：仅 HTTP Error 403 会重新解析资源地址，格式不可用直接失败。
+			if refreshFormat {
+				log(fmt.Sprintf("%s：所选格式不可用；重新解析完整格式清单后重试，保持原画质设置", stage))
+			} else {
+				log(fmt.Sprintf("%s：媒体请求 403；重新解析资源地址后重试", stage))
+			}
 			fresh, resolveErr := c.youtubeMetadata(ctx, sub, item, options, log, true)
 			if resolveErr != nil {
 				return resolveErr
@@ -215,12 +221,48 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 func (c CLI) youtubeMetadataArgs(sub domain.Subscription, options domain.YouTubeOptions) []string {
 	args := append(c.common(sub), "--dump-single-json", "--no-playlist", "--skip-download", "--ignore-no-formats-error")
 	if options.Video || options.ExtractAudio {
-		args = append(args, "-f", options.Format)
+		args = append(args, youtubeFormatArgs(options.Format)...)
+		// 历史资产：仅传入 -f options.Format，使用引擎默认的质量与来源优先级。
 	}
 	if options.AutoSubtitles {
 		args = append(args, "--write-auto-subs", "--sub-langs", "all,-.*")
 	}
 	return args
+}
+
+// youtubeFormatArgs 让解析和下载按同一分辨率顺序选流，保留自定义表达式及分辨率上限。
+// 视频存在性优先，随后比较分辨率和帧率；同分辨率的编码、音轨仍由引擎选择。
+func youtubeFormatArgs(format string) []string {
+	return []string{"-f", format, "--format-sort", config.YouTubeFormatSort, "--format-sort-force"}
+}
+
+// logYouTubeFormats 记录平台实际返回的可下载视频流，预览故事板不能算作视频。
+// 无格式时保留原始清单，交给下载阶段刷新一次，不改为另一种画质或匿名认证。
+func logYouTubeFormats(raw []byte, mediaID string, log func(string)) {
+	var info struct {
+		Formats []struct {
+			Vcodec string `json:"vcodec"`
+			Width  int    `json:"width"`
+			Height int    `json:"height"`
+		} `json:"formats"`
+		FormatID string `json:"format_id"`
+		Width    int    `json:"width"`
+		Height   int    `json:"height"`
+	}
+	if json.Unmarshal(raw, &info) != nil {
+		return
+	}
+	count, width, height := 0, 0, 0
+	for _, f := range info.Formats {
+		if f.Vcodec == "none" || f.Vcodec == "" {
+			continue
+		}
+		count++
+		if min(f.Width, f.Height) > min(width, height) {
+			width, height = f.Width, f.Height
+		}
+	}
+	log(fmt.Sprintf("格式解析；媒体 %s；可用视频流 %d；最高尺寸 %dx%d；选中格式 %s；选中尺寸 %dx%d", mediaID, count, width, height, info.FormatID, info.Width, info.Height))
 }
 
 // youtubeTransferSize 只使用引擎提供的大小，无法确认时保持未知。
