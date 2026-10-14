@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { t, locale } from '../i18n'
-import { onMounted, onUnmounted, ref, toRaw, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, toRaw, watch } from 'vue'
 import { api, useMediaStore } from '../stores/media'
 import type { Settings } from '../types'
 import YouTubeOptions from './YouTubeOptions.vue'
 import UISettingsOptions from './UISettingsOptions.vue'
 import StorageManagement from './StorageManagement.vue'
 import ToggleSwitch from 'primevue/toggleswitch'
+import { formatDate } from '../utils/formatDate'
 import { useHashNavigation } from '../composables/useHashNavigation'
 /**
  * 系统设置以本地表单副本编辑，后台轮询不会覆盖尚未保存的输入。
@@ -14,6 +15,8 @@ import { useHashNavigation } from '../composables/useHashNavigation'
 const props = defineProps<{ settings: Settings | null }>()
 const store = useMediaStore()
 const form = ref<Settings | null>(null)
+/** 常用时区可直接选择；保留已有时区，避免其他分类保存时改变时间语义。 */
+const sleepTimezones = ['Asia/Singapore', 'Asia/Shanghai', 'Asia/Tokyo', 'Asia/Kolkata', 'Europe/Berlin', 'America/New_York', 'America/Los_Angeles', 'UTC']
 const debugEnabled = ref(false)
 const debugLimit = ref('10')
 /** 导航先挂载，真实配置返回后只初始化一次，轮询不覆盖未保存输入。 */
@@ -61,12 +64,16 @@ const categories = [
  { id: 'storage', label: '存储' }, { id: 'debug', label: '调试' },
 ] as const
 const galleryConfig = ref('{}')
-const cookies = ref<Record<string, boolean>>({ youtube: false, instagram: false })
+const cookies = computed(() => store.cookieStatuses)
+/** 状态文案明确区分保存成功与认证可用；YouTube保留匿名使用。 */
+const cookieStateLabel = (p:string) => !cookiesReady.value[p] ? t('加载中') : t(({missing:'未配置',unverified:'未验证',valid:'可用',disabled:'已停用'} as Record<string,string>)[cookies.value[p].state] || '未配置')
+async function loadCookieStatus(platform:string) { await store.loadCookieStatus(platform) }
+
 const cookiePlatform = ref<string | null>(null)
 const cookieText = ref('')
 const cookieLoading = ref(false)
 const cookieLoaded = ref(false)
-const cookiesReady = ref<Record<string, boolean>>({ youtube: false, instagram: false })
+const cookiesReady = computed(() => store.cookieReady)
 const galleryReady = ref(false)
 const versionsLoading = ref(false)
 let cookieRequestId = 0
@@ -84,16 +91,13 @@ async function loadVersions() {
 /** 分类附属数据分别读取，一个慢接口不会延后其他分类的内容。 */
 onMounted(() => {
  void api<{ config: string }>('/gallery-config').then(result => { galleryConfig.value = result.config; galleryReady.value = true }).catch(store.reportError)
- for (const platform of ['youtube', 'instagram']) {
-  void api<{ configured: boolean }>(`/cookies/${platform}`).then(result => {
-   cookies.value[platform] = result.configured
-   cookiesReady.value[platform] = true
-  }).catch(store.reportError)
- }
+ for (const platform of ['youtube', 'instagram']) void loadCookieStatus(platform).catch(store.reportError)
+
  void loadVersions().catch(store.reportError)
 })
 /** 弹窗立即打开，响应只填入当前窗口；关闭或改选平台后忽略旧响应。 */
 async function editCookie(platform: string) {
+ void loadCookieStatus(platform).catch(store.reportError)
  const requestId = ++cookieRequestId
  cookiePlatform.value = platform
  cookieText.value = ''
@@ -112,11 +116,11 @@ async function saveCookie() {
  const platform = cookiePlatform.value
  if (!platform || !cookieLoaded.value) return
  if (await store.mutate(() => api(`/cookies/${platform}`, 'PUT', { content: cookieText.value }), 'Cookie 已保存')) {
-  cookies.value[platform] = true; closeCookie()
+  await loadCookieStatus(platform); closeCookie()
  }
 }
 async function removeCookie(platform: string) {
- if (await store.mutate(() => api(`/cookies/${platform}`, 'DELETE'), 'Cookie 已删除')) cookies.value[platform] = false
+ if (await store.mutate(() => api(`/cookies/${platform}`, 'DELETE'), 'Cookie 已删除')) await loadCookieStatus(platform)
 }
 </script>
 <template>
@@ -142,6 +146,16 @@ async function removeCookie(platform: string) {
    <YouTubeOptions v-model="form.youtube" />
   </section>
   <section v-show="category === 'scheduling'" class="panel settings-panel" :aria-label="t('并发调度设置')">
+   <!-- 每日休眠使用原生时间选择控件，关闭后保留窗口，跨午夜由后台解释。 -->
+   <div class="settings-group"><h3>{{ t('每日休眠') }}</h3>
+    <div class="form-row"><label for="sleep-enabled">{{ t('启用休眠') }}</label><ToggleSwitch v-model="form.sleep.enabled" input-id="sleep-enabled" :disabled="store.busy" /></div>
+    <div class="form-grid">
+     <label>{{ t('开始时间') }}<input v-model="form.sleep.start" type="time" :required="form.sleep.enabled" :disabled="!form.sleep.enabled || store.busy"></label>
+     <label>{{ t('结束时间') }}<input v-model="form.sleep.end" type="time" :required="form.sleep.enabled" :disabled="!form.sleep.enabled || store.busy"></label>
+     <label>{{ t('休眠时区') }}<select v-model="form.sleep.timezone" :disabled="!form.sleep.enabled || store.busy"><option v-for="zone in [...new Set([form.sleep.timezone, ...sleepTimezones])]" :key="zone" :value="zone">{{ zone }}</option></select></label>
+    </div>
+    <small class="help">{{ t('支持跨午夜；休眠时暂停采集和新下载，当前媒体完成后停止，结束后自动继续。') }}</small>
+   </div>
    <!-- 各平台分别编辑解析预算，下载名额只约束消费者。 -->
    <div v-for="platform in (['instagram', 'youtube'] as const)" :key="platform" class="settings-group">
     <h3>{{ platform === 'instagram' ? 'Instagram' : 'YouTube' }}</h3>
@@ -177,16 +191,19 @@ async function removeCookie(platform: string) {
   <div class="form-grid">
   <div v-for="p in ['youtube', 'instagram']" :key="p" class="form-row settings-cookie-row">
    <span class="settings-cookie-name">{{ p === 'youtube' ? 'YouTube' : 'Instagram' }}</span>
-   <div class="settings-cookie-controls">
+   <div class="settings-cookie-content"><div class="settings-cookie-controls">
    <!-- 状态图标使用相同 SVG 坐标，文字使用独立行框，避免字符图标影响上下对齐。 -->
-   <span class="cookie-status" :class="{ configured: cookies[p] }">
-    <svg class="cookie-status-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.5" :fill="cookies[p] ? 'currentColor' : 'none'" stroke="currentColor" />
-     <path v-if="cookies[p]" d="M4.5 8 7 10.5 11.5 5.5" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+   <span class="cookie-status" :class="{ configured: cookies[p].usable }">
+    <svg class="cookie-status-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.5" :fill="cookies[p].usable ? 'currentColor' : 'none'" stroke="currentColor" />
+     <path v-if="cookies[p].usable" d="M4.5 8 7 10.5 11.5 5.5" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
      <path v-else d="M5 8h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-    </svg><span class="cookie-status-label">{{ cookiesReady[p] ? cookies[p] ? t("已配置") : t("未配置") : t("加载中") }}</span>
+    </svg><span class="cookie-status-label">{{ cookieStateLabel(p) }}</span>
    </span>
    <div class="settings-row-actions"><button :disabled="store.busy" @click="editCookie(p)">{{ t("编辑") }}</button>
-   <button :disabled="store.busy || !cookiesReady[p] || !cookies[p]" @click="removeCookie(p)">{{ t("删除") }}</button></div>
+   <button :disabled="store.busy || !cookiesReady[p] || !cookies[p].configured" @click="removeCookie(p)">{{ t("删除") }}</button></div>
+   </div>
+   <small class="help">{{ cookies[p].platform_enabled ? p === 'youtube' && !cookies[p].usable ? t('匿名使用') : t('平台可运行') : t('平台已停用') }}<template v-if="cookies[p].reason"> · {{ t(cookies[p].reason) }}</template></small>
+   <small v-if="cookies[p].state === 'disabled' && cookies[p].disabled_at && !cookies[p].disabled_at?.startsWith('0001')" class="help">{{ t('停用 {time}', {time:formatDate(cookies[p].disabled_at)}) }}</small>
    </div>
   </div>
   </div>

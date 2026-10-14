@@ -7,6 +7,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"log/slog"
 	"media-harbor/internal/config"
+	"media-harbor/internal/credentials"
 	"media-harbor/internal/domain"
 	"media-harbor/internal/engine"
 	"net/url"
@@ -22,20 +23,23 @@ import (
 
 // App 持有接口依赖；入口负责注入 SQLite 和 CLI 适配器。
 type App struct {
-	Config         config.Config
-	Repo           domain.Repository
-	Engine         domain.Engine
-	mu             sync.Mutex
-	logMu          sync.Mutex
-	avatarMu       sync.Mutex // 头像更新与移动归档共用锁，避免并发产生两个副本。
-	loggers        map[string]*subscriptionLogWriter
-	active         map[int64]context.CancelFunc
-	activeInfo     map[int64]runningTaskInfo
-	queueWaits     map[int64]domain.PlatformRun
-	wake           chan struct{}
-	directories    []DirectoryStatus
-	wg             sync.WaitGroup
-	schedulerPhase atomic.Pointer[schedulerPhase]
+	Credentials      *credentials.Store
+	credentialPaused map[int64]bool
+	Config           config.Config
+	Repo             domain.Repository
+	Engine           domain.Engine
+	mu               sync.Mutex
+	logMu            sync.Mutex
+	avatarMu         sync.Mutex // 头像更新与移动归档共用锁，避免并发产生两个副本。
+	loggers          map[string]*subscriptionLogWriter
+	active           map[int64]context.CancelFunc
+	activeInfo       map[int64]runningTaskInfo
+	queueWaits       map[int64]domain.PlatformRun
+	sleepUntil       time.Time
+	wake             chan struct{}
+	directories      []DirectoryStatus
+	wg               sync.WaitGroup
+	schedulerPhase   atomic.Pointer[schedulerPhase]
 }
 
 // New 不启动隐式后台协程，主程序明确控制生命周期。
@@ -47,7 +51,12 @@ func New(c config.Config, r domain.Repository, e domain.Engine) *App {
 			configurable.Configure(settings)
 		}
 	}
-	app := &App{Config: c, Repo: r, Engine: e, active: map[int64]context.CancelFunc{}, activeInfo: map[int64]runningTaskInfo{}, queueWaits: map[int64]domain.PlatformRun{}, loggers: map[string]*subscriptionLogWriter{}, wake: make(chan struct{}, 1), directories: DetectDirectories(c)}
+	auth := credentials.New(c.DataDir)
+	if owner, ok := e.(interface{ CredentialStore() *credentials.Store }); ok && owner.CredentialStore() != nil {
+		auth = owner.CredentialStore()
+	}
+	auth.Activate()
+	app := &App{Credentials: auth, credentialPaused: map[int64]bool{}, Config: c, Repo: r, Engine: e, active: map[int64]context.CancelFunc{}, activeInfo: map[int64]runningTaskInfo{}, queueWaits: map[int64]domain.PlatformRun{}, loggers: map[string]*subscriptionLogWriter{}, wake: make(chan struct{}, 1), directories: DetectDirectories(c)}
 	// 启动时校正现有头像后缀，保持旧接口及作者共享身份。
 	app.migrateAvatarExtensions()
 	return app
@@ -309,6 +318,17 @@ func (a *App) SaveSettings(s domain.Settings) error {
 			return fmt.Errorf("请求窗口与请求数必须为正整数，间隔与冷却不能为负数")
 		}
 	}
+	// 旧客户端缺席休眠字段时保留当前配置，关闭操作仍携带时间窗口。
+	if s.Sleep == (domain.SleepSettings{}) {
+		current, err := a.Repo.Settings()
+		if err != nil {
+			return err
+		}
+		s.Sleep = current.Sleep
+	}
+	if err := s.Sleep.Validate(); err != nil {
+		return err
+	}
 	if s.Template == "" {
 		return fmt.Errorf("目录模板不能为空")
 	}
@@ -458,6 +478,22 @@ func (a *App) tick(ctx context.Context) error {
 			counts[info.Platform+info.Lane]++
 		}
 	}
+	// 无Instagram凭据或当前SDK仍携带已停用/被替换的Cookie时停止该进程。
+	credentialStates := map[string]credentials.Status{}
+	for _, platform := range []string{"instagram", "youtube"} {
+		state, err := a.Credentials.Status(platform)
+		if err != nil {
+			return err
+		}
+		credentialStates[platform] = state
+	}
+	for id, info := range a.activeInfo {
+		state := credentialStates[info.Platform]
+		if cancel := a.active[id]; cancel != nil && (!state.PlatformEnabled || info.UsesCookie && (!state.Usable || state.Revision != info.CookieRevision)) {
+			a.credentialPaused[id] = true
+			cancel()
+		}
+	}
 	// 同时到期的周期任务按到期时间进入队列，避免配置列表顺序决定先后。
 	sort.SliceStable(subs, func(i, j int) bool {
 		if subs[i].NextRun.Equal(subs[j].NextRun) {
@@ -482,6 +518,19 @@ func (a *App) tick(ctx context.Context) error {
 			}
 		}
 	}
+	// 到期任务仍入队；休眠仅阻止认领，不移动周期、不取消当前媒体。
+	until := settings.Sleep.Until(time.Now())
+	if !until.Equal(a.sleepUntil) {
+		if !until.IsZero() {
+			slog.Info("进入休眠，暂停生产及新下载", "stage", "sleep", "until", until, "timezone", settings.Sleep.Timezone)
+		} else if !a.sleepUntil.IsZero() {
+			slog.Info("休眠结束，恢复原平台队列", "stage", "sleep")
+		}
+		a.sleepUntil = until
+	}
+	if !until.IsZero() {
+		return nil
+	}
 	// 测试模式只认领每个订阅前 N 个下载，旧队列其余记录继续保留。
 	allowedDownloads := map[int64]bool{}
 	if settings.Debug.TestItemLimit > 0 {
@@ -502,7 +551,7 @@ func (a *App) tick(ctx context.Context) error {
 	a.markSchedulerPhase("认领任务与分配并发名额")
 	for _, t := range tasks {
 		s, exists := subMap[t.SubscriptionID]
-		if !exists || t.Status != "queued" || (t.ContentID == 0 && busyScans[s.ID]) {
+		if !exists || !credentialStates[s.Platform].PlatformEnabled || t.Status != "queued" || (t.ContentID == 0 && busyScans[s.ID]) {
 			continue
 		}
 		if !belongsToPlatformRun(t, runs[s.Platform]) {
@@ -549,7 +598,7 @@ func (a *App) tick(ctx context.Context) error {
 			return e
 		}
 		a.active[t.ID] = cancel
-		a.activeInfo[t.ID] = runningTaskInfo{Platform: s.Platform, SubscriptionID: s.ID, Lane: taskLane(t)}
+		a.activeInfo[t.ID] = runningTaskInfo{Platform: s.Platform, SubscriptionID: s.ID, Lane: taskLane(t), UsesCookie: credentialStates[s.Platform].Usable, CookieRevision: credentialStates[s.Platform].Revision}
 		if t.ContentID == 0 {
 			busyScans[s.ID] = true
 		}
@@ -591,7 +640,14 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 		return
 	}
 	defer a.endTaskLog(s, logStarted, writer)
+	cookie, _ := a.Credentials.Status(s.Platform)
 	log := func(msg string) {
+		if reason := credentials.FailureReason(s.Platform, msg); cookie.Usable && reason != "" {
+			if changed, err := a.Credentials.Disable(s.Platform, cookie.Revision, reason); changed && err == nil {
+				slog.Warn("Cookie已停用", "stage", "authentication", "platform", s.Platform, "task_id", t.ID, "reason", reason)
+				a.wakeScheduler()
+			}
+		}
 		if a.recordProgress(t.ID, msg) {
 			return
 		}
@@ -641,7 +697,9 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 				case <-progressDone:
 					return
 				case <-ticker.C:
-					if !queueWaiting.Load() {
+					// 历史资产：仅以 !queueWaiting.Load() 判断是否输出平台等待日志。
+					sleeping, _ := a.Repo.Settings()
+					if !queueWaiting.Load() && sleeping.Sleep.Until(time.Now()).IsZero() {
 						log(fmt.Sprintf("等待平台返回媒体，扫描已运行 %s", time.Since(started).Round(time.Second)))
 					}
 				}
@@ -872,6 +930,7 @@ func (a *App) finish(t domain.Task, taskErr error) {
 	defer func() {
 		delete(a.active, t.ID)
 		delete(a.activeInfo, t.ID)
+		delete(a.credentialPaused, t.ID)
 		a.wakeScheduler()
 	}()
 	current, e := a.Repo.Task(t.ID)
@@ -890,9 +949,20 @@ func (a *App) finish(t domain.Task, taskErr error) {
 			current.Progress = []domain.TransferProgress{{Kind: "video", Status: "skipped"}}
 		}
 	}
-	if errors.Is(taskErr, context.Canceled) {
+	state, _ := a.Credentials.Status(a.activeInfo[t.ID].Platform)
+	credentialPaused := a.credentialPaused[t.ID] || errors.Is(taskErr, credentials.ErrUnavailable) || taskErr != nil && a.activeInfo[t.ID].UsesCookie && !state.Usable
+	if errors.Is(taskErr, context.Canceled) || credentialPaused {
 		current.Status = "queued"
 		current.Error = "服务停止，等待继续执行"
+		if credentialPaused {
+			current.Error = "Cookie不可用，任务保留在平台队列；请更新Cookie后继续"
+			if state.PlatformEnabled {
+				current.Error = "已停用失效Cookie，等待以匿名方式重新执行"
+			}
+			if state.Usable {
+				current.Error = "Cookie已更新，等待使用新配置继续执行"
+			}
+		}
 		current.FinishedAt = time.Time{}
 		if current.ContentID != 0 {
 			c, readErr := a.Repo.Content(current.ContentID)
@@ -941,3 +1011,6 @@ func taskLane(t domain.Task) string {
 	}
 	return ":download"
 }
+
+// CookieChanged 使新上传凭据立即参与调度，停止携带旧版本的进程后继续原队列。
+func (a *App) CookieChanged() { a.wakeScheduler() }

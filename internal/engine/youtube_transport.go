@@ -24,7 +24,8 @@ func (c CLI) runYouTube(ctx context.Context, args []string, log func(string), ca
 	}
 	defer end()
 	if stage == "media" {
-		release, err := p.acquireConsumer(ctx, log)
+		release, err := c.consumer(ctx, "youtube", log)
+		// 历史资产：每个 SDK 阶段单独调用 p.acquireConsumer(ctx, log)。
 		if err != nil {
 			return nil, err
 		}

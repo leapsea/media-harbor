@@ -11,14 +11,17 @@ import (
 // TaskGroup 将一个订阅的扫描和下载状态收口为一行，底层任务仍独立持久化。
 // 下载统计与扫描状态分开，避免扫描成功被误认为下载完成。
 type TaskGroup struct {
-	SubscriptionID int64          `json:"subscription_id"`
-	Status         string         `json:"status"`
-	ScanStatus     string         `json:"scan_status"`
-	Counts         map[string]int `json:"counts"`
-	Total          int            `json:"total"`
-	Error          string         `json:"error"`
-	UpdatedAt      time.Time      `json:"updated_at"`
-	TestItemLimit  int            `json:"test_item_limit"`
+	SubscriptionID   int64          `json:"subscription_id"`
+	Status           string         `json:"status"`
+	ScanStatus       string         `json:"scan_status"`
+	Counts           map[string]int `json:"counts"`
+	Total            int            `json:"total"`
+	Error            string         `json:"error"`
+	UpdatedAt        time.Time      `json:"updated_at"`
+	PlatformDisabled bool           `json:"platform_disabled"`
+	BlockedReason    string         `json:"blocked_reason,omitempty"`
+	SleepUntil       *time.Time     `json:"sleep_until,omitempty"`
+	TestItemLimit    int            `json:"test_item_limit"`
 }
 
 // selectedTasks 保留最新扫描和按发现顺序选中的下载。
@@ -58,6 +61,14 @@ func (a *App) TaskGroups() ([]TaskGroup, error) {
 	if err != nil {
 		return nil, err
 	}
+	subs, err := a.Repo.Subscriptions()
+	if err != nil {
+		return nil, err
+	}
+	platforms := map[int64]string{}
+	for _, sub := range subs {
+		platforms[sub.ID] = sub.Platform
+	}
 	stats, err := a.Repo.TaskGroupStats(settings.Debug.TestItemLimit)
 	if err != nil {
 		return nil, err
@@ -77,6 +88,18 @@ func (a *App) TaskGroups() ([]TaskGroup, error) {
 		}
 		if group.Status == "completed" && group.Counts["skipped"] == group.Total && group.Total > 0 {
 			group.Status = "skipped"
+		}
+		// 休眠是调度展示状态，底层队列不改成取消或失败，取消按钮继续可用。
+		if until := settings.Sleep.Until(time.Now()); !until.IsZero() && group.Counts["running"] == 0 && (stat.Queued > 0 || stat.Running > 0) {
+			group.SleepUntil = &until
+		}
+		state, statusErr := a.Credentials.Status(platforms[group.SubscriptionID])
+		if statusErr != nil {
+			return nil, statusErr
+		}
+		group.PlatformDisabled = !state.PlatformEnabled
+		if group.PlatformDisabled {
+			group.BlockedReason = state.Reason
 		}
 		groups = append(groups, group)
 	}

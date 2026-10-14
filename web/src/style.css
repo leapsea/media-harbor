@@ -279,6 +279,9 @@ textarea{resize:vertical;margin-bottom:8px;line-height:1.5}
 .settings-version-row { grid-template-columns: 120px minmax(0, 1fr); }
 /* Cookie 复用通用表单网格，不伸展状态与按钮之间的空白，也不另设卡片尺寸。 */
 .settings-cookie-name { text-align: right; }
+/* 状态说明属于控件列，停用原因和时间不能挤入平台标签列。 */
+.settings-cookie-content { min-width: 0; }
+.settings-cookie-content .help { overflow-wrap: anywhere; }
 .settings-cookie-controls { display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }
 .settings-cookie-controls > .cookie-status { max-width: 100%; white-space: normal; }
 .settings-cookie-controls > .settings-row-actions { justify-content: flex-start; }

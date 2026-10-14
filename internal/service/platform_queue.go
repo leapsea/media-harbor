@@ -13,6 +13,8 @@ import (
 type runningTaskInfo struct {
 	Platform       string
 	SubscriptionID int64
+	CookieRevision int64
+	UsesCookie     bool
 	Lane           string
 }
 

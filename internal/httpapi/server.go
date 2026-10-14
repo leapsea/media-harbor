@@ -268,6 +268,12 @@ func (api *API) cookiePath(r *http.Request) (string, error) {
 
 // cookieStatus 不读取 Cookie 内容，仅返回存在状态。
 func (api *API) cookieStatus(w http.ResponseWriter, r *http.Request) {
+	v, e := api.app.Credentials.Status(r.PathValue("platform"))
+	reply(w, v, e)
+}
+
+/* 历史资产：仅检查文件存在。
+func (api *API) cookieStatus(w http.ResponseWriter, r *http.Request) {
 	p, e := api.cookiePath(r)
 	present := false
 	if e == nil {
@@ -276,6 +282,8 @@ func (api *API) cookieStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	reply(w, map[string]bool{"configured": present}, e)
 }
+
+*/
 
 // cookieContent 仅在用户编辑时读取文本，未配置时返回空编辑内容。
 func (api *API) cookieContent(w http.ResponseWriter, r *http.Request) {
@@ -292,7 +300,7 @@ func (api *API) cookieContent(w http.ResponseWriter, r *http.Request) {
 
 // saveCookie 将浏览器请求头转为引擎标准格式，Netscape 文本保持原样，响应仅包含配置状态。
 func (api *API) saveCookie(w http.ResponseWriter, r *http.Request) {
-	p, e := api.cookiePath(r)
+	_, e := api.cookiePath(r)
 	if e == nil {
 		var input struct {
 			Content string `json:"content"`
@@ -302,14 +310,31 @@ func (api *API) saveCookie(w http.ResponseWriter, r *http.Request) {
 			var normalized string
 			normalized, e = engine.NormalizeCookies(r.PathValue("platform"), input.Content)
 			if e == nil {
-				e = os.WriteFile(p, []byte(normalized), 0600)
+				e = api.app.Credentials.Save(r.PathValue("platform"), normalized)
+				// 历史资产：直接写入Cookie文件，不记录版本或解除停用。
 			}
 		}
 	}
-	reply(w, map[string]bool{"configured": e == nil}, e)
+	if e == nil {
+		api.app.CookieChanged()
+	}
+	v, statusErr := api.app.Credentials.Status(r.PathValue("platform"))
+	if e == nil {
+		e = statusErr
+	}
+	reply(w, v, e)
 }
 
 // deleteCookie 删除指定引擎的配置，未配置时仍可成功返回。
+func (api *API) deleteCookie(w http.ResponseWriter, r *http.Request) {
+	e := api.app.Credentials.Delete(r.PathValue("platform"))
+	if e == nil {
+		api.app.CookieChanged()
+	}
+	reply(w, map[string]bool{"configured": false}, e)
+}
+
+/* 历史资产：只删除原文件。
 func (api *API) deleteCookie(w http.ResponseWriter, r *http.Request) {
 	p, e := api.cookiePath(r)
 	if e == nil {
@@ -320,6 +345,8 @@ func (api *API) deleteCookie(w http.ResponseWriter, r *http.Request) {
 	}
 	reply(w, map[string]bool{"configured": false}, e)
 }
+
+*/
 
 // 配置编辑只验证 JSON 语法，具体 gallery-dl 配置由引擎解释。
 // 未保存配置时返回空对象，便于首次在线编辑。

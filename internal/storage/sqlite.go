@@ -42,6 +42,26 @@ func Open(path string, defaults domain.Settings) (*Store, error) {
 	if e = db.QueryRow("SELECT payload FROM app_settings WHERE id=1").Scan(&payload); e == nil {
 		var fields map[string]json.RawMessage
 		e = json.Unmarshal([]byte(payload), &fields)
+		// 新配置只补缺失字段，已有值不随升级重置。
+		if e == nil {
+			changed := false
+			for key, value := range map[string]any{"pipeline": defaults.Pipeline, "sleep": defaults.Sleep} {
+				if fields[key] == nil {
+					fields[key], e = json.Marshal(value)
+					if e != nil {
+						break
+					}
+					changed = true
+				}
+			}
+			if e == nil && changed {
+				b, e = json.Marshal(fields)
+				if e == nil {
+					_, e = db.Exec("UPDATE app_settings SET payload=? WHERE id=1", b)
+				}
+			}
+		}
+		/* 历史资产：只迁移流水线字段。
 		if e == nil && fields["pipeline"] == nil {
 			fields["pipeline"], e = json.Marshal(defaults.Pipeline)
 			if e == nil {
@@ -51,6 +71,7 @@ func Open(path string, defaults domain.Settings) (*Store, error) {
 				}
 			}
 		}
+		*/
 	}
 	if e != nil {
 		db.Close()

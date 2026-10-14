@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"media-harbor/internal/config"
+	"media-harbor/internal/credentials"
 	"media-harbor/internal/domain"
 	"media-harbor/internal/storage"
 	"os"
@@ -59,6 +60,10 @@ func testApp(t *testing.T, eng domain.Engine) *App {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { db.Close() })
+	// 离线引擎使用测试凭据，认证规则不依赖真实账号。
+	if err := credentials.New(c.DataDir).Save("instagram", "# Netscape HTTP Cookie File\n.instagram.com\tTRUE\t/\tTRUE\t0\tsessionid\toffline-test\n"); err != nil {
+		t.Fatal(err)
+	}
 	return New(c, db, eng)
 }
 

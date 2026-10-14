@@ -196,6 +196,7 @@ type Settings struct {
 	UI                  UISettings       `json:"ui"`
 	Debug               DebugSettings    `json:"debug"`
 	Pipeline            PipelineSettings `json:"pipeline"`
+	Sleep               SleepSettings    `json:"sleep"`
 }
 
 // ConfigurableEngine 在保存设置后更新共享调度器，不重启任务或复制 Cookie。

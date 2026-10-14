@@ -2,7 +2,7 @@ import { t, setLocale } from '../i18n'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useToast } from 'primevue/usetoast'
-import type { Dashboard, Subscription, Content, ContentHistoryPage, Settings, TaskGroup } from '../types'
+import type { Dashboard, Subscription, Content, ContentHistoryPage, Settings, TaskGroup, CookieStatus } from '../types'
 import type { Directory } from '../types'
 import type { PageId } from '../utils/hashRoute'
 import { confirmMutation } from '../utils/mutation'
@@ -37,6 +37,12 @@ export const useMediaStore = defineStore('media', () => {
  let historyPageSizeSelected = false
  const directories = ref<Directory[]>([])
  const settings = ref<Settings | null>(null)
+ /** Cookie状态共用页面刷新和请求去重，不在设置组件另建轮询。 */
+ const cookieStatuses = ref<Record<string,CookieStatus>>({youtube:{configured:false,usable:false,platform_enabled:true,state:'missing',revision:0},instagram:{configured:false,usable:false,platform_enabled:false,state:'missing',revision:0}})
+ const cookieReady = ref<Record<string,boolean>>({youtube:false,instagram:false})
+ function loadCookieStatus(platform:string) {
+  return requests.run(`cookie:${platform}`,async()=>{cookieStatuses.value[platform]=await api<CookieStatus>(`/cookies/${platform}`);cookieReady.value[platform]=true})
+ }
  const busy = ref(false)
  const pageLoading = ref<Record<PageId, boolean>>({ overview: false, tasks: false, history: false, settings: false })
  const refreshing = computed(() => pageLoading.value[activePage.value])
@@ -104,7 +110,7 @@ async function loadPage(page: PageId) {
   if (!settings.value) loads.push(loadSettings())
   if (!directories.value.length) loads.push(loadDirectories())
  } else {
-  loads = [loadSettings(), loadDirectories()]
+  loads = [loadSettings(), loadDirectories(),loadCookieStatus('youtube'),loadCookieStatus('instagram')]
  }
  // 等待仅用于本页加载状态和错误收口，不控制组件挂载或其他页面的请求。
  const results = await Promise.allSettled(loads)
@@ -155,5 +161,5 @@ function refresh(page: PageId = activePage.value) {
   catch (e) { reportError(e); return false }
   finally { busy.value = false }
  }
- return { dashboard, subscriptions, taskGroups, contents, contentsLoaded, historyTotal, historyPage, historyPageSize, directories, settings, busy, refreshing, pageLoading, subscriptionsLoaded, taskGroupsLoaded, archiveMounted, archiveAvailable, subscriptionName, reportError, setActivePage, setHistoryPagination, refresh, mutate }
+ return { cookieStatuses, cookieReady, loadCookieStatus, dashboard, subscriptions, taskGroups, contents, contentsLoaded, historyTotal, historyPage, historyPageSize, directories, settings, busy, refreshing, pageLoading, subscriptionsLoaded, taskGroupsLoaded, archiveMounted, archiveAvailable, subscriptionName, reportError, setActivePage, setHistoryPagination, refresh, mutate }
 })

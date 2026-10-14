@@ -11,6 +11,17 @@ import (
 // ResolveName 为新建表单提供作者名称，独立于订阅扫描与任务队列。
 // 引擎接口隔离元数据来源，返回的名称只能作为一个目录段。
 func (a *App) ResolveName(ctx context.Context, s domain.Subscription) (string, error) {
+	if err := a.Credentials.Check(s.Platform); err != nil {
+		return "", err
+	}
+	// 表单预览不等待数小时；休眠结束后仍可正常重新解析。
+	settings, err := a.Repo.Settings()
+	if err != nil {
+		return "", err
+	}
+	if until := settings.Sleep.Until(time.Now()); !until.IsZero() {
+		return "", fmt.Errorf("休眠中，名称解析将在 %s 后可用", until.Format(time.RFC3339))
+	}
 	resolver, ok := a.Engine.(domain.NameResolver)
 	if !ok {
 		return "", fmt.Errorf("当前引擎不支持作者名称解析")
@@ -26,6 +37,26 @@ func (a *App) ResolveName(ctx context.Context, s domain.Subscription) (string, e
 // 未保存表单不落头像；外部解析与下载不持有任务队列锁。
 func (a *App) CreateSubscription(ctx context.Context, s *domain.Subscription) error {
 	started := time.Now()
+	settings, err := a.Repo.Settings()
+	if err != nil {
+		return err
+	}
+	if err := a.Credentials.Check(s.Platform); err != nil {
+		s.StableID, s.CurrentName = "", ""
+		if err := a.SaveSubscription(s); err != nil {
+			return err
+		}
+		return a.writeSubscriptionLog(*s, domain.Task{SubscriptionID: s.ID}, started, "平台已停用；创建配置已保存；等待配置可用Cookie后解析作者与头像")
+	}
+	// 休眠期间只保存及排队，头像和身份在后续扫描中获取，创建接口即时返回。
+	if until := settings.Sleep.Until(started); !until.IsZero() {
+		s.StableID, s.CurrentName = "", ""
+		if err := a.SaveSubscription(s); err != nil {
+			return err
+		}
+		return a.writeSubscriptionLog(*s, domain.Task{SubscriptionID: s.ID}, started,
+			fmt.Sprintf("休眠中；阶段 创建保存；配置 #%d；作者及头像解析延后；恢复时间 %s", s.ID, until.Format(time.RFC3339)))
+	}
 	var resolveErr error
 	// 身份来自引擎解析，忽略客户端提交的稳定 ID。
 	s.StableID, s.CurrentName = "", ""

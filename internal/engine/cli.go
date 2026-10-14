@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"media-harbor/internal/config"
+	"media-harbor/internal/credentials"
 	"media-harbor/internal/domain"
 	"os"
 	"os/exec"
@@ -19,6 +20,7 @@ import (
 
 // CLI 通过只读付费策略作下载决策，不直接访问数据库。
 type CLI struct {
+	cookies    *credentials.Store
 	DataDir    string
 	PaidPolicy domain.PaidVideoPolicy
 	instagram  *instagramSourceCache
@@ -33,6 +35,8 @@ func NewCLI(dataDir string, policy domain.PaidVideoPolicy) CLI {
 	youtube.platform = "YouTube"
 	c := CLI{DataDir: dataDir, PaidPolicy: policy, instagram: newInstagramSourceCache(), requests: requests,
 		pipelines: map[string]*platformPipeline{"instagram": newPlatformPipeline(requests, 10), "youtube": newPlatformPipeline(youtube, 2)}}
+	c.cookies = credentials.New(dataDir)
+	requests.cookies, youtube.cookies = c.cookies, c.cookies
 	c.Configure(config.Defaults())
 	return c
 }
@@ -109,10 +113,25 @@ func (c CLI) common(s domain.Subscription) []string {
 		// 否则旧 sleep-429 会让用户缩短冷却后的设置仍等待原来的一分钟。
 		// SDK 的零值表示停止429重试，最小非零值保留有限重试，实际等待由 Go 执行。
 		args = append(args, "-o", "extractor.instagram.sleep-request=0", "-o", "extractor.instagram.sleep-429=0.001", "-o", "extractor.instagram.sleep-retries=0.001", "-o", "downloader.http.sleep-429=0.001")
+		// Cookie回写经Go按版本合并，SDK并发进程不直接覆盖共享文件。
+		if c.cookies != nil && c.cookies.Active() {
+			args = append(args, "-o", "extractor.instagram.cookies-update=false")
+		}
 	}
-	if _, err := os.Stat(c.CookiePath(s.Platform)); err == nil {
+	if cookie := c.activeCookie(s.Platform); cookie != "" {
+		args = append(args, "--cookies", cookie)
+	}
+	/* 历史资产：参数构造直接检查共享Cookie文件。
+	useCookie := true
+	if c.cookies != nil && c.cookies.Active() {
+		status, err := c.cookies.Status(s.Platform)
+		useCookie = err == nil && status.Usable
+	}
+	if _, err := os.Stat(c.CookiePath(s.Platform)); err == nil && useCookie {
 		args = append(args, "--cookies", c.CookiePath(s.Platform))
 	}
+	// 历史资产：文件存在即传入 --cookies，未判断认证状态。
+	*/
 	return args
 }
 
@@ -402,6 +421,14 @@ func str(v any) string {
 // 主视频、独立音频和本地提取依次运行，共用任务取消信号。
 // 任一阶段失败时不清理工作文件，供手动重试。
 func (c CLI) Download(ctx context.Context, s domain.Subscription, item domain.Content, o domain.YouTubeOptions, dir string, log func(string)) error {
+	// 许可按媒体条目管理，主视频及附件不能被当成休眠后的新条目。
+	scope := &mediaConsumerScope{}
+	ctx = context.WithValue(ctx, mediaConsumerKey{}, scope)
+	defer func() {
+		if scope.release != nil {
+			scope.release()
+		}
+	}()
 	if e := os.MkdirAll(dir, 0755); e != nil {
 		return e
 	}
@@ -494,4 +521,21 @@ func Versions(ctx context.Context) map[string]string {
 		}
 	}
 	return out
+}
+
+// CredentialStore 由服务激活认证策略；独立工具不隐式改变平台运行规则。
+func (c CLI) CredentialStore() *credentials.Store { return c.cookies }
+
+// activeCookie 收口扫描、下载与只读验证的凭据选择；已停用Cookie不能通过旁路加载。
+func (c CLI) activeCookie(platform string) string {
+	if c.cookies != nil && c.cookies.Active() {
+		state, err := c.cookies.Status(platform)
+		if err != nil || !state.Usable {
+			return ""
+		}
+	}
+	if _, err := os.Stat(c.CookiePath(platform)); err == nil {
+		return c.CookiePath(platform)
+	}
+	return ""
 }

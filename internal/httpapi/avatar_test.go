@@ -85,6 +85,10 @@ func TestCreateAvatarBeforeMedia(t *testing.T) {
 	defer db.Close()
 	eng := &creationAvatarEngine{}
 	app := service.New(config.Config{DataDir: root, LogDir: root, DownloadDir: filepath.Join(root, "downloads"), ArchiveDir: filepath.Join(root, "archive")}, db, eng)
+	// 离线头像测试满足Instagram登录前置条件，不访问真实账号。
+	if err := app.Credentials.Save("instagram", "# Netscape HTTP Cookie File\n.instagram.com\tTRUE\t/\tTRUE\t0\tsessionid\toffline-test\n"); err != nil {
+		t.Fatal(err)
+	}
 	handler := Handler(app)
 	body := `{"platform":"instagram","url":"https://www.instagram.com/alice/","display_name":"custom","enabled":false,"archive":false}`
 	response := httptest.NewRecorder()

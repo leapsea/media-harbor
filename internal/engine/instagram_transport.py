@@ -2,6 +2,7 @@
 import json
 import os
 import urllib.request
+import urllib.parse
 
 
 def control(event):
@@ -17,6 +18,16 @@ def install_instagram_transport():
     if not os.environ.get("MEDIA_HARBOR_CONTROL"):
         return
     from requests.adapters import HTTPAdapter
+    # 仅传递SDK警告和错误，认证判断与停用规则留在Go。
+    if os.environ.get("MEDIA_HARBOR_COOKIE_UPDATE_GO") == "1":
+        import logging
+        class CredentialEvents(logging.Handler):
+            def emit(self, record):
+                try:
+                    control({"Kind": "sdk-error", "AuthFailure": record.getMessage()})
+                except Exception:
+                    pass
+        logging.getLogger().addHandler(CredentialEvents(logging.WARNING))
     original = HTTPAdapter.send
 
     def send(self, request, *args, **kwargs):
@@ -44,6 +55,9 @@ def install_instagram_transport():
             total = headers.get("Content-Range", "/"+headers.get("Content-Length", "0")).rsplit("/", 1)[-1]
             control({"Kind": "release", "Lease": lease, "Status": response.status_code if response is not None else 0,
                      "RetryAfter": headers.get("Retry-After", ""), "Offset": int(offset) if offset.isdecimal() else 0,
-                     "Total": int(total) if total.isdecimal() else 0})
+                     "Total": int(total) if total.isdecimal() else 0,
+                     "Host": urllib.parse.urlparse(request.url).hostname or "", "Authenticated": bool(request.headers.get("Cookie")),
+                     "Cookies": [{"Name": c.name, "Value": c.value, "Domain": c.domain, "Path": c.path, "Expires": c.expires or 0, "Secure": c.secure, "HTTPOnly": "HttpOnly" in c._rest} for c in response.cookies] if response is not None else [],
+                     "AuthFailure": "login_required" if response is not None and (response.status_code == 401 or "/accounts/login" in headers.get("Location", "")) else ""})
 
     HTTPAdapter.send = send

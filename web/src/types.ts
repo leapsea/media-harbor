@@ -36,7 +36,10 @@ export interface Directory {
 }
 /** 展示参数单独建模，与下载行为分离。 */
 export interface UISettings { language: string; recent_downloads: number; history_page_size: number; task_page_size: number; task_log_lines: number }
+/** 每日休眠按配置时区解释，支持跨午夜。 */
+export interface SleepSettings { enabled: boolean; start: string; end: string; timezone: string }
 export interface Settings {
+ sleep: SleepSettings
 	/** 解析请求预算与下载线程数独立，两个平台分别计时。 */
 	pipeline: {
 	 queue_capacity: number
@@ -60,6 +63,8 @@ export interface Dashboard {
 
 /** 订阅队列汇总；下载数量与扫描状态分别表示，测试上限由服务端返回。 */
 export interface TaskGroup {
+ platform_disabled: boolean; blocked_reason?: string
+ sleep_until?: string
  subscription_id: number; status: string; scan_status: string
  counts: Record<string, number>; total: number; error: string
  updated_at: string; test_item_limit: number
@@ -74,3 +79,6 @@ export interface DetailPart {
 }
 export interface DetailContent { key: string; title: string; status: string; parts: DetailPart[]; error?: string }
 export interface TaskDetails { platform: string; items: DetailContent[] }
+
+/** 配置存在、Cookie可用和平台能否运行分别展示。 */
+export interface CookieStatus { configured: boolean; usable: boolean; platform_enabled: boolean; state: string; reason?: string; revision: number; disabled_at?: string }

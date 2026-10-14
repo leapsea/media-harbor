@@ -8,6 +8,7 @@
     "instagram_source_cache_ttl_minutes": 60,
     "instagram_source_cache_capacity": 64
   },
+  "sleep": {"enabled": false, "start": "00:00", "end": "06:00", "timezone": "Asia/Singapore"},
   "template": "{platform}/{directory_name}/{year}/{month}{day}/{filename}",
   "auto_archive": false,
   "youtube": {

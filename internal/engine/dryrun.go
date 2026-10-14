@@ -78,10 +78,8 @@ func (c CLI) DryRun(ctx context.Context, sub domain.Subscription, options domain
 	}
 	encoder := json.NewEncoder(input)
 	// Cookie 路径仅供读取，回写策略由两个 SDK 的只读适配器明确关闭。
-	cookie := ""
-	if _, err := os.Stat(c.CookiePath(sub.Platform)); err == nil {
-		cookie = c.CookiePath(sub.Platform)
-	}
+	cookie := c.activeCookie(sub.Platform)
+	// 历史资产：只读验证只判断文件存在，仍可能使用已停用Cookie。
 	if err = encoder.Encode(map[string]any{"subscription": sub, "options": options, "limit": limit,
 		"language": sub.RequestLanguage,
 		"cookie":   cookie, "gallery_config": filepath.Join(c.DataDir, "gallery-dl.json"),

@@ -52,13 +52,23 @@ func (p *platformPipeline) acquireProducer(ctx context.Context, log func(string)
 	if time.Since(started) > time.Second {
 		log(fmt.Sprintf("生产者恢复；等待 %s", time.Since(started).Round(time.Millisecond)))
 	}
-	return sync.OnceFunc(func() { <-p.producer }), nil
+	// 等到休眠结束再进入 SDK；已取得执行权的进程也在每次请求前复核。
+	release := sync.OnceFunc(func() { <-p.producer })
+	if err := p.requests.waitAwake(ctx, log); err != nil {
+		release()
+		return nil, err
+	}
+	// 历史资产：return sync.OnceFunc(func() { <-p.producer }), nil
+	return release, nil
 }
 
 // acquireConsumer 也约束头像传输，避免扫描旁路下载突破媒体并发数。
 func (p *platformPipeline) acquireConsumer(ctx context.Context, log func(string)) (func(), error) {
 	for {
 		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := p.requests.waitAwake(ctx, log); err != nil {
 			return nil, err
 		}
 		p.mu.Lock()
@@ -102,6 +112,7 @@ func (c CLI) Configure(s domain.Settings) {
 		p.changed = make(chan struct{})
 		p.mu.Unlock()
 		p.requests.configure(options)
+		p.requests.configureSleep(s.Sleep)
 	}
 	// 有效期按当前值判断，降低容量立即淘汰旧描述。
 	if c.instagram != nil {
@@ -115,11 +126,31 @@ func (c CLI) Configure(s domain.Settings) {
 
 // consumer 在独立工具中沿用原行为；服务实例统一使用平台名额。
 func (c CLI) consumer(ctx context.Context, platform string, log func(string)) (func(), error) {
+	// 一个条目的多个 SDK 阶段复用首次媒体传输取得的名额。
+	// 休眠不截断当前视频的附件及本地收尾，解析阶段仍走生产者门控。
+	if scope, ok := ctx.Value(mediaConsumerKey{}).(*mediaConsumerScope); ok {
+		if scope.release != nil {
+			return func() {}, nil
+		}
+		if p := c.pipeline(platform); p != nil {
+			release, err := p.acquireConsumer(ctx, log)
+			if err != nil {
+				return nil, err
+			}
+			scope.release = release
+		}
+		return func() {}, nil
+	}
 	if p := c.pipeline(platform); p != nil {
 		return p.acquireConsumer(ctx, log)
 	}
 	return func() {}, nil
 }
+
+// mediaConsumerScope 仅由同一条目的顺序下载阶段访问，退出时统一归还。
+// 首次解析不占下载名额；只有开始媒体阶段才认领。
+type mediaConsumerKey struct{}
+type mediaConsumerScope struct{ release func() }
 
 // Prepare 在队列有容量且增量边界检查通过后执行，不再次检查本地历史。
 func (c CLI) Prepare(ctx context.Context, sub domain.Subscription, item domain.Content, options domain.YouTubeOptions, log func(string)) error {

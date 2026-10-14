@@ -21,6 +21,9 @@ func (a *App) DryRun(ctx context.Context, sub domain.Subscription, log func(stri
 	if sub.Platform != "youtube" && sub.Platform != "instagram" {
 		return fmt.Errorf("平台应为 youtube 或 instagram")
 	}
+	if err := a.Credentials.Check(sub.Platform); err != nil {
+		return err
+	}
 	runner, ok := a.Engine.(domain.DryRunner)
 	if !ok {
 		return fmt.Errorf("当前下载器不支持 dryrun")

@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"media-harbor/internal/config"
+	"media-harbor/internal/credentials"
 	"media-harbor/internal/domain"
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,6 +20,7 @@ import (
 // instagramRequests 共享一个平台请求时钟，SDK 只负责实际 HTTP 会话。
 // 许可持有至响应头返回，媒体流传输不会阻塞后续许可或改变下载并发。
 type instagramRequests struct {
+	cookies            *credentials.Store
 	mu                 sync.Mutex
 	permit             chan struct{}
 	last, cooldown     time.Time
@@ -25,6 +28,7 @@ type instagramRequests struct {
 	window             time.Duration
 	maximum            int
 	history            []time.Time
+	sleep              domain.SleepSettings
 	platform           string
 	changed            chan struct{}
 	server             *http.Server
@@ -34,11 +38,13 @@ type instagramRequests struct {
 
 // 每次引擎执行独立关联取消上下文和日志，不让其他任务继承 Cookie 或签名地址。
 type instagramOperation struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	log    func(string)
-	stage  string
-	leases map[string]func()
+	revision   int64
+	usesCookie bool
+	ctx        context.Context
+	cancel     context.CancelFunc
+	log        func(string)
+	stage      string
+	leases     map[string]func()
 }
 
 // instagramRoundTripper 使 Go 的公开作者网页请求与 SDK 使用同一个平台许可。
@@ -91,6 +97,10 @@ func (r *instagramRequests) wait(ctx context.Context, log func(string), stage st
 	}
 	// SDK 正常结束、异常与进程取消可能同时归还同一许可，归还必须幂等。
 	for {
+		if err := r.checkCredentials(); err != nil {
+			release()
+			return nil, err
+		}
 		r.mu.Lock()
 		due, reason := r.last.Add(r.interval), "请求间隔"
 		if r.cooldown.After(due) {
@@ -106,6 +116,10 @@ func (r *instagramRequests) wait(ctx context.Context, log func(string), stage st
 			if boundary.After(due) {
 				due, reason = boundary, "生产者滑动窗口已满"
 			}
+		}
+		// 平台解析请求在休眠窗口内等待，媒体请求走独立 waitMedia。
+		if until := r.sleep.Until(now); until.After(due) {
+			due, reason = until, "休眠时间段"
 		}
 		left := time.Until(due)
 		if left <= 0 {
@@ -170,6 +184,9 @@ func (r *instagramRequests) waitMedia(ctx context.Context, log func(string)) err
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if err := r.checkCredentials(); err != nil {
+			return err
+		}
 		r.mu.Lock()
 		left, changed := time.Until(r.cooldown), r.changed
 		r.mu.Unlock()
@@ -191,6 +208,13 @@ func (r *instagramRequests) waitMedia(ctx context.Context, log func(string)) err
 
 // begin 启动本机控制通道；令牌只存在于本次进程环境，不公开到业务 API。
 func (r *instagramRequests) begin(ctx context.Context, stage string, log func(string)) ([]string, func(), error) {
+	if err := r.checkCredentials(); err != nil {
+		return nil, nil, err
+	}
+	var cookie credentials.Status
+	if r.cookies != nil && r.cookies.Active() {
+		cookie, _ = r.cookies.Status(strings.ToLower(r.platform))
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.server == nil {
@@ -211,7 +235,7 @@ func (r *instagramRequests) begin(ctx context.Context, stage string, log func(st
 	}
 	token := hex.EncodeToString(tokenBytes[:])
 	ctx, cancel := context.WithCancel(ctx)
-	op := &instagramOperation{ctx: ctx, cancel: cancel, log: log, stage: stage, leases: map[string]func(){}}
+	op := &instagramOperation{revision: cookie.Revision, usesCookie: cookie.Usable, ctx: ctx, cancel: cancel, log: log, stage: stage, leases: map[string]func(){}}
 	r.ops[token] = op
 	end := func() {
 		// 先取消等待者再清理许可，异常退出也不会阻挡下一批请求。
@@ -228,7 +252,11 @@ func (r *instagramRequests) begin(ctx context.Context, stage string, log func(st
 			r.server = nil
 		}
 	}
-	return []string{"MEDIA_HARBOR_CONTROL=" + r.address, "MEDIA_HARBOR_TOKEN=" + token, "MEDIA_HARBOR_STAGE=" + stage}, end, nil
+	env := []string{"MEDIA_HARBOR_CONTROL=" + r.address, "MEDIA_HARBOR_TOKEN=" + token, "MEDIA_HARBOR_STAGE=" + stage}
+	if r.cookies != nil && r.cookies.Active() {
+		env = append(env, "MEDIA_HARBOR_COOKIE_UPDATE_GO=1")
+	}
+	return env, end, nil
 }
 
 // handle 只接收 SDK 控制事件，不代理平台流量，也不记录 Cookie 或 URL 查询。
@@ -242,10 +270,13 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	var event struct {
-		Kind, Lease, RetryAfter, Page, Shortcode string
-		Media                                    bool
-		Status                                   int
-		Total, Offset                            int64
+		Kind, Lease, RetryAfter, Page, Shortcode, AuthFailure, Host string
+		Cookies                                                     []credentials.Cookie
+		SetCookies                                                  []string
+		Authenticated                                               bool
+		Media                                                       bool
+		Status                                                      int
+		Total, Offset                                               int64
 	}
 	if err := json.NewDecoder(req.Body).Decode(&event); err != nil {
 		http.Error(w, err.Error(), 400)
@@ -253,6 +284,13 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 	}
 	switch event.Kind {
 	case "acquire":
+		if r.cookies != nil && r.cookies.Active() && op.usesCookie {
+			status, err := r.cookies.Status(strings.ToLower(r.platform))
+			if err != nil || !status.Usable || status.Revision != op.revision {
+				http.Error(w, "Cookie版本已停用或更新，请重新排队", 409)
+				return
+			}
+		}
 		started := time.Now()
 		// CDN 字节传输不占生产者请求预算；下载并发由消费者许可控制。
 		release := func() {}
@@ -293,6 +331,44 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 			// 头部已经返回，后续数据读取保留原下载器的流式与断点语义。
 			release()
 		}
+		// 只接收原始认证信号，固定业务原因由Go生成；媒体CDN拒绝不代表Cookie失效。
+		if r.cookies != nil && r.cookies.Active() && op.usesCookie && !event.Media && trustedCookieHost(strings.ToLower(r.platform), event.Host) {
+			if event.AuthFailure != "" {
+				reason := credentials.FailureReason(strings.ToLower(r.platform), event.AuthFailure)
+				if reason != "" {
+					if _, err := r.cookies.Disable(strings.ToLower(r.platform), op.revision, reason); err != nil {
+						op.log("认证状态保存失败：" + err.Error())
+					}
+					op.log(reason)
+				}
+			} else {
+				updates := event.Cookies
+				response := &http.Response{Header: http.Header{"Set-Cookie": event.SetCookies}}
+				for _, cookie := range response.Cookies() {
+					domain := cookie.Domain
+					if domain == "" {
+						domain = event.Host
+					}
+					expires := int64(0)
+					if !cookie.Expires.IsZero() {
+						expires = cookie.Expires.Unix()
+					}
+					if cookie.MaxAge > 0 {
+						expires = time.Now().Unix() + int64(cookie.MaxAge)
+					}
+					if cookie.MaxAge < 0 {
+						expires = 1
+					}
+					updates = append(updates, credentials.Cookie{Name: cookie.Name, Value: cookie.Value, Domain: domain, Path: cookie.Path, Expires: expires, Secure: cookie.Secure, HTTPOnly: cookie.HttpOnly})
+				}
+				if op.stage != "dryrun" {
+					_ = r.cookies.Apply(strings.ToLower(r.platform), op.revision, updates)
+				}
+				if event.Authenticated && event.Status == 200 {
+					_ = r.cookies.Confirm(strings.ToLower(r.platform), op.revision)
+				}
+			}
+		}
 		op.log(fmt.Sprintf("%s HTTP 响应；阶段 %s；许可 %s；状态 %d", r.platform, op.stage, event.Lease, event.Status))
 		if op.stage == "media" && r.platform == "Instagram" {
 			op.log(fmt.Sprintf("媒体 HTTP 响应；状态 %d", event.Status))
@@ -305,6 +381,17 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 			transfer(op.log, domain.TransferProgress{Kind: "media", Status: "running", Phase: "传输媒体", BytesTotal: event.Total, BytesDone: event.Offset})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	case "sdk-error":
+		if r.cookies != nil && r.cookies.Active() && op.usesCookie {
+			if reason := credentials.FailureReason(strings.ToLower(r.platform), event.AuthFailure); reason != "" {
+				if changed, err := r.cookies.Disable(strings.ToLower(r.platform), op.revision, reason); err != nil {
+					op.log("认证状态保存失败：" + err.Error())
+				} else if changed {
+					op.log("Cookie已停用；" + reason)
+				}
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	case "web-post":
 		// 网页解析属于 Go 业务；Python 只取得 SDK 会话中的原始页面。
 		post := instagramWebPost(event.Page, event.Shortcode)
@@ -312,4 +399,17 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 	default:
 		http.Error(w, "未知控制事件", 400)
 	}
+}
+
+// checkCredentials 复用平台策略，YouTube无Cookie时仍允许匿名使用。
+func (r *instagramRequests) checkCredentials() error {
+	if r.cookies != nil && r.cookies.Active() {
+		return r.cookies.Check(strings.ToLower(r.platform))
+	}
+	return nil
+}
+
+// trustedCookieHost 排除媒体CDN和其他网站的401/403，防止误停用登录。
+func trustedCookieHost(platform, host string) bool {
+	return host == platform+".com" || strings.HasSuffix(host, "."+platform+".com")
 }
