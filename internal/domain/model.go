@@ -10,6 +10,7 @@ import (
 // 音频下载与音频提取是两个独立布尔值。
 // 评论在 V1 使用引擎的 info JSON 文件。
 // YouTubeOptions 可用于全局默认值或订阅级整体覆盖。
+// AudioFormat 与 AudioQuality 只控制本地提取；best 复制源音轨，不重新编码。
 type YouTubeOptions struct {
 	Video             bool   `json:"video"`
 	Format            string `json:"format"`

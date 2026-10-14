@@ -295,5 +295,9 @@
   "每个平台单独计算，达到上限后暂停生产。": "Counted separately for each platform. Production pauses when the limit is reached.",
   "仅影响当前平台；当前媒体完成后休眠，结束后自动继续。": "Applies only to this platform. Active media finishes before rest; the queue resumes automatically afterward.",
   "请求节奏与缓存": "Request pacing and cache",
-  "请求节奏": "Request pacing"
+  "请求节奏": "Request pacing",
+  "额外音频（原始最高品质）": "Download extra audio (best original quality)",
+  "本地提取格式": "Local extraction format",
+  "原始格式（不转码）": "Original format (no re-encoding)",
+  "转码音频质量": "Audio encoding quality"
 }

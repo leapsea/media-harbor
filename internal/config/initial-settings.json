@@ -23,7 +23,7 @@
     "comments": true,
     "extra_audio": true,
     "extract_audio": false,
-    "audio_format": "m4a",
+    "audio_format": "best",
     "audio_quality": "0",
     "thumbnail": true,
     "metadata": true,

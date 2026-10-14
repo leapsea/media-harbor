@@ -171,9 +171,12 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 			return media("缩略图", youtubeArgs(domain.YouTubeOptions{Thumbnail: true, Fragments: options.Fragments}, dir))
 		})
 	}
-	if options.ExtraAudio && Inventory(item, dir).Audio(options.AudioFormat, false) == "" {
+	if options.ExtraAudio && Inventory(item, dir).Audio("best", false) == "" {
 		child("额外音频", func() error {
-			args := []string{"--no-playlist", "-f", "bestaudio/best", "-x", "--audio-format", options.AudioFormat, "--audio-quality", options.AudioQuality, "-o", filepath.Join(dir, "%(title)s-%(id)s.audio.%(ext)s")}
+			// best 保留 Opus/AAC 等源编码；只有封装内含视频时才无损分离音轨。
+			log("额外音频：下载平台最高品质音轨，保留原编码，不指定转码格式或码率")
+			args := []string{"--no-playlist", "-f", "bestaudio/best", "-x", "--audio-format", "best", "-o", filepath.Join(dir, "%(title)s-%(id)s.audio.%(ext)s")}
+			// 历史资产：--audio-format options.AudioFormat --audio-quality options.AudioQuality 强制转换源音轨。
 			return media("额外音频", args)
 		})
 	}
@@ -183,9 +186,21 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 			if video == "" {
 				return fmt.Errorf("本地提取音频需要已下载的视频")
 			}
-			out := filepath.Join(dir, trimVideoName(video)+".extracted."+options.AudioFormat)
+			format := options.AudioFormat
+			if format == "best" {
+				var err error
+				format, err = originalAudioExtension(ctx, video, log)
+				if err != nil {
+					return err
+				}
+			}
+			out := filepath.Join(dir, trimVideoName(video)+".extracted."+format)
 			args := []string{"-y", "-i", video, "-vn"}
-			if options.AudioFormat == "m4a" {
+			if options.AudioFormat == "best" {
+				// 只复制第一条音轨的编码数据，不进入任何音频编码器。
+				args = append(args, "-map", "0:a:0", "-c:a", "copy")
+				log("本地音频提取：保留原编码，输出格式 " + format)
+			} else if options.AudioFormat == "m4a" {
 				args = append(args, "-c:a", "aac")
 			}
 			if options.AudioFormat == "m4a" || options.AudioFormat == "mp3" {
@@ -215,6 +230,28 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 	}
 	log(fmt.Sprintf("主任务：附属任务全部结束；失败 %d 项；释放视频名额", len(failures)))
 	return errors.Join(failures...)
+}
+
+// originalAudioExtension 根据实际音轨选择容器，仅用于无损提取，不猜测视频扩展名。
+// 未列出的编码使用支持多种音轨的 Matroska 音频容器，仍执行 stream copy。
+func originalAudioExtension(ctx context.Context, video string, log func(string)) (string, error) {
+	raw, err := run(ctx, "ffprobe", []string{"-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name", "-of", "default=noprint_wrappers=1:nokey=1", video}, log, true)
+	if err != nil {
+		return "", fmt.Errorf("读取本地音轨失败：%w", err)
+	}
+	codec := strings.TrimSpace(string(raw))
+	switch codec {
+	case "":
+		return "", fmt.Errorf("本地视频未包含可提取的音轨")
+	case "aac", "alac":
+		return "m4a", nil
+	case "opus", "mp3", "flac", "ac3", "eac3":
+		return codec, nil
+	case "vorbis":
+		return "ogg", nil
+	default:
+		return "mka", nil
+	}
 }
 
 // youtubeMetadataArgs 不抓评论；同一份格式清单由主视频和附件复用。

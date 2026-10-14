@@ -239,10 +239,15 @@ func copyFile(src, dst string) error {
 // fileTags 根据真实产物分类，评论由 info JSON 内的评论字段确认。
 // 勾选下载选项不意味着平台一定提供字幕或评论。
 func fileTags(path, platform string) []string {
+	// 原始音轨容器可以与视频相同，先用专属产物标识判断音频。
+	name := filepath.Base(path)
+	if strings.Contains(name, ".audio.") || strings.Contains(name, ".extracted.") {
+		return []string{"audio"}
+	}
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".mp4", ".webm", ".mkv", ".mov", ".avi":
 		return []string{"video"}
-	case ".m4a", ".mp3", ".flac", ".aac", ".opus", ".ogg", ".wav":
+	case ".m4a", ".mp3", ".flac", ".aac", ".opus", ".ogg", ".wav", ".mka", ".ac3", ".eac3":
 		return []string{"audio"}
 	case ".srt", ".vtt", ".ass", ".ssa", ".ttml", ".srv1", ".srv2", ".srv3", ".json3", ".lrc":
 		return []string{"subtitles"}

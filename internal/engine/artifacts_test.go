@@ -125,3 +125,26 @@ func TestNeedsSupplement(t *testing.T) {
 		}
 	}
 }
+
+// TestOriginalAudioInventory 原生音频容器不被当作视频，补全识别新格式及已有音轨。
+func TestOriginalAudioInventory(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"id.audio.webm", "id.audio.opus", "id.extracted.opus", "id.audio.m4a"} {
+		path := filepath.Join(root, name)
+		if err := os.WriteFile(path, []byte("audio"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		v := Inventory(domain.Content{Paths: []string{path}}, "")
+		if v.Video() != "" {
+			t.Fatal("音频被当作主视频", name)
+		}
+		extracted := strings.Contains(name, ".extracted.")
+		if v.Audio("best", extracted) != path || v.Audio("best", !extracted) != "" {
+			t.Fatal("原始音频分类错误", name)
+		}
+		// 已有格式不必匹配旧配置中的 m4a；补全不会重复下载最佳音轨。
+		if !extracted && NeedsSupplement("youtube", domain.Content{Paths: []string{path}}, domain.YouTubeOptions{ExtraAudio: true, AudioFormat: "m4a"}) {
+			t.Fatal("原始音轨被重复补全", name)
+		}
+	}
+}

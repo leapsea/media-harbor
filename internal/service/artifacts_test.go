@@ -21,6 +21,8 @@ func TestArtifactTags(t *testing.T) {
 	}{
 		{"video.mp4", "", []string{"video"}},
 		{"audio.m4a", "", []string{"audio"}},
+		{"id.audio.webm", "", []string{"audio"}},
+		{"id.extracted.mka", "", []string{"audio"}},
 		{"video.zh.vtt", "", []string{"subtitles"}},
 		{"metadata.info.json", `{ "title": "video" }`, []string{"metadata"}},
 		{"comments.info.json", `{ "comments": [] }`, []string{"metadata", "comments"}},

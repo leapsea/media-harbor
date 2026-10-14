@@ -55,6 +55,10 @@ func Inventory(item domain.Content, dir string) ArtifactInventory {
 }
 func (v ArtifactInventory) Video() string {
 	for _, path := range v.Paths {
+		// 原始音轨可以使用 WebM 容器，不能把带音频标识的文件当作主视频。
+		if strings.Contains(filepath.Base(path), ".audio.") || strings.Contains(filepath.Base(path), ".extracted.") {
+			continue
+		}
 		switch strings.ToLower(filepath.Ext(path)) {
 		case ".mp4", ".mkv", ".webm", ".mov":
 			return path
@@ -65,6 +69,16 @@ func (v ArtifactInventory) Video() string {
 func (v ArtifactInventory) Audio(format string, extracted bool) string {
 	for _, path := range v.Paths {
 		isExtracted := strings.Contains(filepath.Base(path), ".extracted.")
+		if format == "best" && isExtracted == extracted {
+			// 标识覆盖原始容器；纯音频扩展名兼容已有索引，旧文件不会被重新编码。
+			if isExtracted || strings.Contains(filepath.Base(path), ".audio.") {
+				return path
+			}
+			switch strings.ToLower(filepath.Ext(path)) {
+			case ".m4a", ".opus", ".ogg", ".mp3", ".aac", ".flac", ".wav", ".mka", ".ac3", ".eac3":
+				return path
+			}
+		}
 		if strings.EqualFold(filepath.Ext(path), "."+format) && isExtracted == extracted {
 			return path
 		}
@@ -278,7 +292,7 @@ func NeedsSupplement(platform string, item domain.Content, options domain.YouTub
 	if (options.Video || (options.ExtractAudio && inventory.Audio(options.AudioFormat, true) == "")) && inventory.Video() == "" {
 		return true
 	}
-	if options.ExtraAudio && inventory.Audio(options.AudioFormat, false) == "" {
+	if options.ExtraAudio && inventory.Audio("best", false) == "" {
 		return true
 	}
 	if options.ExtractAudio && inventory.Audio(options.AudioFormat, true) == "" {

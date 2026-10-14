@@ -11,7 +11,7 @@ func TestInitialSettings(t *testing.T) {
 	if !settings.UseUploadDate || settings.YouTubeConcurrent != 3 || settings.InstagramConcurrent != 6 || settings.Template != "{platform}/{directory_name}/{year}/{month}{day}/{filename}" {
 		t.Fatalf("settings=%+v", settings)
 	}
-	if settings.YouTube.AudioFormat != "m4a" || settings.YouTube.AudioQuality != "0" || settings.YouTube.Fragments != 6 {
+	if settings.YouTube.AudioFormat != "best" || settings.YouTube.AudioQuality != "0" || settings.YouTube.Fragments != 6 {
 		t.Fatalf("youtube=%+v", settings.YouTube)
 	}
 }
