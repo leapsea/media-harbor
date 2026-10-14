@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/json"
 	"media-harbor/internal/config"
 	"media-harbor/internal/domain"
 	"path/filepath"
@@ -134,87 +133,5 @@ func TestVideoChildrenSurviveFailureCancelAndRetry(t *testing.T) {
 	p, _ = s.Post(sub.ID, "video")
 	if p.Expected != 4 || p.Status == "completed" {
 		t.Fatal(p)
-	}
-}
-
-// 升级保留旧任务/资源 ID 与文件位置；旧轮播清单未知，重新确认后才能完成。
-func TestPostMigrationPreservesOldIdentities(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "media.db")
-	s, err := Open(path, config.Defaults())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sub := domain.Subscription{Platform: "instagram", URL: "https://example.test/author"}
-	_ = s.SaveSubscription(&sub)
-	_ = s.AddContentAndTask(sub.ID, domain.Content{RemoteID: "pk-1", URL: "https://www.instagram.com/p/old/", Asset: 1})
-	items, _ := s.Contents()
-	item := items[0]
-	item.Status = "completed"
-	item.Paths = []string{"/downloads/kept.jpg"}
-	item.PostID = 0
-	raw, _ := json.Marshal(item)
-	_, err = s.db.Exec("UPDATE content_items SET payload=? WHERE id=?", raw, item.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tasks, _ := s.Tasks()
-	task := tasks[0]
-	task.Status = "completed"
-	_ = s.SaveTask(&task)
-	_, _ = s.db.Exec("DELETE FROM download_items")
-	_, _ = s.db.Exec("DELETE FROM post_tasks")
-	s.Close()
-	s, err = Open(path, config.Defaults())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	migrated, _ := s.Content(item.ID)
-	p, _ := s.Post(sub.ID, "old")
-	children, _ := s.DownloadItems(p.ID)
-	if migrated.ID != item.ID || len(migrated.Paths) != 1 || p.ManifestComplete || p.Status == "completed" || len(children) != 1 || children[0].Status != "completed" {
-		t.Fatalf("content=%+v post=%+v children=%+v", migrated, p, children)
-	}
-	migrated.ExpectedAssets = 1
-	_, err = s.RegisterPost(sub.ID, "instagram", migrated, domain.YouTubeOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	p, _ = s.Post(sub.ID, "old")
-	if p.Status != "completed" {
-		t.Fatal(p)
-	}
-}
-
-// 旧的明确跳过事件在迁移后仍表示平台不提供资源，详情不能改显示为有文件完成。
-func TestPostMigrationReplaysUnavailableChild(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "media.db")
-	s, err := Open(path, config.Defaults())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sub := domain.Subscription{Platform: "youtube", URL: "https://example.test/author", YouTube: &domain.YouTubeOptions{Video: true, Subtitles: true}}
-	_ = s.SaveSubscription(&sub)
-	_ = s.AddContentAndTask(sub.ID, domain.Content{RemoteID: "old-video"})
-	tasks, _ := s.Tasks()
-	task := tasks[0]
-	task.Status = "completed"
-	task.Progress = []domain.TransferProgress{{Kind: "video", Status: "completed", BytesTotal: 100, BytesDone: 100}, {Kind: "subtitles", Status: "skipped"}}
-	_ = s.SaveTask(&task)
-	// 模拟前一版已关联 B/C 但丢失子项快照的升级现场。
-	_, err = s.db.Exec("UPDATE download_items SET payload=json_remove(payload,'$.progress','$.outcome')")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.Close()
-	s, err = Open(path, config.Defaults())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	p, _ := s.Post(sub.ID, "old-video")
-	children, _ := s.DownloadItems(p.ID)
-	if children[0].Progress.BytesTotal != 100 || children[1].Outcome != "unavailable" || p.Status != "completed" {
-		t.Fatalf("post=%+v children=%+v", p, children)
 	}
 }

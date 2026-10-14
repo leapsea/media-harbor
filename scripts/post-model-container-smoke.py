@@ -77,6 +77,7 @@ def run():
         assert len(posts)==1 and posts[0]['status']=='completed' and posts[0]['expected']==posts[0]['completed']==2, posts
         children = api.request(f"/posts/{posts[0]['id']}/downloads")
         assert len(children)==2 and all(c['status']=='completed' for c in children), children
+        assert all(c['progress']['bytes_total'] > 0 and c['progress']['bytes_done'] == c['progress']['bytes_total'] for c in children), children
         before = counts()
         scan(ig,'full')
         assert counts().get('/post/instagram/cached',0)==before.get('/post/instagram/cached',0), counts()
@@ -98,6 +99,8 @@ def run():
         assert after.get('/post/youtube/single',0)-before.get('/post/youtube/single',0)==1, after
         children = api.request(f"/posts/{posts[0]['id']}/downloads")
         assert {c['kind'] for c in children}=={'video','metadata'} and all(c['status']=='completed' for c in children), children
+        video = next(c for c in children if c['kind']=='video')
+        assert video['progress']['bytes_total'] > 0 and video['progress']['bytes_done'] == video['progress']['bytes_total'], children
         before = counts()
         scan(yt,'full')
         assert counts().get('/post/youtube/single',0)==before.get('/post/youtube/single',0), counts()
@@ -116,6 +119,12 @@ def run():
         restored = api.wait(lambda:api.request(f"/subscriptions/{yt['id']}/posts"),lambda ps:all(p['status']=='completed' for p in ps))
         assert ids==[(p['id'],p['remote_id']) for p in restored], restored
         report['restart_preserves_identities']=True
+        # 新数据目录直接初始化当前表集合，重启不引入迁移版本记录。
+        tables = json.loads(subprocess.check_output(['docker','exec',NAME,'/opt/engines/bin/python3','-c',
+            "import sqlite3,json; db=sqlite3.connect('file:/data/media.db?mode=ro',uri=True); print(json.dumps([r[0] for r in db.execute(\"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name\")]))"],text=True))
+        assert tables == ['app_settings','content_items','download_history_cleared','download_items','engine_versions','platform_runs','post_tasks','subscriptions','tasks','youtube_paid_blocks'], tables
+        report['current_schema_initialization'] = tables
+
         (RUN/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
         print('PASS YouTube：单视频一次解析；完成B跳过；更新A加载新配置；重启保持B/C；报告：'+str(RUN/'report.json'),flush=True)
         if os.environ.get('SMOKE_UI_HOLD')=='1':

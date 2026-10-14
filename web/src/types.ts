@@ -22,7 +22,7 @@ export interface Subscription {
 /** 一个文件可以同时承载评论和元数据，数量来自对应文件。 */
 export interface ContentFile { path: string; tags: string[]; comment_count?: number }
 export interface Content {
- id: number; post_id?: number; expected_assets?: number; subscription_id: number; remote_id: string; url: string; title: string
+ id: number; post_id: number; expected_assets: number; subscription_id: number; remote_id: string; url: string; title: string
  published: string; status: string; paths: string[]; tags: string[]; files: ContentFile[]; archived: boolean; error: string
 }
 export interface ContentHistoryPage { items: Content[]; total: number; page: number; page_size: number }

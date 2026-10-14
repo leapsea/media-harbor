@@ -140,3 +140,39 @@ func TestTaskDetailsReadsBAndCInsteadOfVisibleTaskTotals(t *testing.T) {
 		t.Fatal(item)
 	}
 }
+
+// 首次默认设置来自初始化；保存请求缺字段时不借用数据库旧值，也不改变原配置。
+func TestCurrentSettingsRejectMissingFieldsWithoutBackfill(t *testing.T) {
+	a := testApp(t, fakeEngine{})
+	original, err := a.Repo.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"pipeline", "sleep", "log_lines", "disabled_sleep_start"} {
+		candidate := original
+		switch field {
+		case "pipeline":
+			candidate.Pipeline = domain.PipelineSettings{}
+		case "sleep":
+			candidate.Sleep = domain.SleepSettings{}
+		case "log_lines":
+			candidate.UI.TaskLogLines = 0
+		case "disabled_sleep_start":
+			candidate.Sleep.Enabled = false
+			candidate.Sleep.Start = ""
+		}
+		if err = a.SaveSettings(candidate); err == nil {
+			t.Fatalf("缺席字段被旧值补齐：%s", field)
+		}
+		saved, _ := a.Repo.Settings()
+		if !reflect.DeepEqual(saved, original) {
+			t.Fatalf("无效请求修改了已保存配置：%s", field)
+		}
+	}
+	// 当前完整结构仍可直接保存；关闭有效窗口不改变休眠功能的原有语义。
+	candidate := original
+	candidate.Sleep.Enabled = false
+	if err = a.SaveSettings(candidate); err != nil {
+		t.Fatal(err)
+	}
+}

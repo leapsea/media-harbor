@@ -145,9 +145,6 @@ func (api *API) contentHistoryPage(w http.ResponseWriter, r *http.Request) {
 	if err != nil || size < 1 {
 		size = settings.UI.HistoryPageSize
 	}
-	if size < 1 { // Older or incomplete settings use the product's established default.
-		size = 20
-	}
 	items, total, err := api.app.ContentHistoryPage((page-1)*size, size)
 	if err != nil {
 		reply(w, nil, err)

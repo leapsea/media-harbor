@@ -3,6 +3,7 @@ package storage
 
 import (
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"media-harbor/internal/domain"
@@ -17,7 +18,7 @@ type Store struct {
 
 // Open 不自动重建数据库，更不会删除下载文件或 Cookie。
 // WAL 与单连接适合当前单实例队列。
-// 初始化只创建缺失表，不进行开发阶段数据清理。
+// 初始化采用当前 schema，默认设置仅写入一次，不改写已经保存的配置。
 func Open(path string, defaults domain.Settings) (*Store, error) {
 	db, e := sql.Open("sqlite", path)
 	if e != nil {
@@ -36,51 +37,7 @@ func Open(path string, defaults domain.Settings) (*Store, error) {
 		db.Close()
 		return nil, e
 	}
-	// 中断的任务回到队列，下载程序使用原工作目录继续执行。
-	// 只迁移本版本新增的流水线字段，已有下载、界面及用户配置保持原值。
-	var payload string
-	if e = db.QueryRow("SELECT payload FROM app_settings WHERE id=1").Scan(&payload); e == nil {
-		var fields map[string]json.RawMessage
-		e = json.Unmarshal([]byte(payload), &fields)
-		// 新配置只补缺失字段，已有值不随升级重置。
-		if e == nil {
-			changed := false
-			for key, value := range map[string]any{"pipeline": defaults.Pipeline, "sleep": defaults.Sleep} {
-				if fields[key] == nil {
-					fields[key], e = json.Marshal(value)
-					if e != nil {
-						break
-					}
-					changed = true
-				}
-			}
-			if e == nil && changed {
-				b, e = json.Marshal(fields)
-				if e == nil {
-					_, e = db.Exec("UPDATE app_settings SET payload=? WHERE id=1", b)
-				}
-			}
-		}
-		/* 历史资产：只迁移流水线字段。
-		if e == nil && fields["pipeline"] == nil {
-			fields["pipeline"], e = json.Marshal(defaults.Pipeline)
-			if e == nil {
-				b, e = json.Marshal(fields)
-				if e == nil {
-					_, e = db.Exec("UPDATE app_settings SET payload=? WHERE id=1", b)
-				}
-			}
-		}
-		*/
-	}
-	if e != nil {
-		db.Close()
-		return nil, e
-	}
-	if e = s.migratePosts(); e != nil {
-		db.Close()
-		return nil, e
-	}
+	// 重启恢复属于当前运行生命周期，保留已下载位置与主动取消的状态。
 	tasks, e := s.Tasks()
 	if e != nil {
 		return nil, e
@@ -116,24 +73,9 @@ func Open(path string, defaults domain.Settings) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // JSON 快照避免配置字段的重复转换，索引字段保留在关系列中。
-const schema = `
-PRAGMA journal_mode=WAL;
-CREATE TABLE IF NOT EXISTS subscriptions(id INTEGER PRIMARY KEY,platform TEXT NOT NULL,identity TEXT NOT NULL,payload TEXT NOT NULL,UNIQUE(platform,identity));
-CREATE TABLE IF NOT EXISTS content_items(id INTEGER PRIMARY KEY,subscription_id INTEGER NOT NULL,remote_id TEXT NOT NULL,payload TEXT NOT NULL,UNIQUE(subscription_id,remote_id));
-CREATE TABLE IF NOT EXISTS task_model_migrations(name TEXT PRIMARY KEY);
-CREATE TABLE IF NOT EXISTS post_tasks(id INTEGER PRIMARY KEY,subscription_id INTEGER NOT NULL,remote_id TEXT NOT NULL,payload TEXT NOT NULL,UNIQUE(subscription_id,remote_id));
-CREATE TABLE IF NOT EXISTS download_items(id INTEGER PRIMARY KEY,post_id INTEGER NOT NULL,content_id INTEGER NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL,UNIQUE(post_id,content_id,kind));
-CREATE INDEX IF NOT EXISTS download_items_content ON download_items(content_id);
-CREATE TABLE IF NOT EXISTS download_history_cleared(content_id INTEGER PRIMARY KEY);
-CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY,subscription_id INTEGER NOT NULL,content_id INTEGER NOT NULL,kind TEXT NOT NULL,status TEXT NOT NULL,payload TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS tasks_status ON tasks(status,id);
-CREATE INDEX IF NOT EXISTS tasks_subscription_id ON tasks(subscription_id,id);
-CREATE UNIQUE INDEX IF NOT EXISTS task_active ON tasks(subscription_id,content_id,kind) WHERE status IN ('queued','running');
-CREATE TABLE IF NOT EXISTS app_settings(id INTEGER PRIMARY KEY,payload TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS engine_versions(name TEXT PRIMARY KEY,version TEXT NOT NULL,checked_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS platform_runs(platform TEXT PRIMARY KEY,payload TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS youtube_paid_blocks(channel_id TEXT PRIMARY KEY,failed_task_id INTEGER NOT NULL);
-`
+//
+//go:embed schema.sql
+var schema string
 
 // list 和 one 只在存储适配器内部共享序列化逻辑。
 // 查询始终关闭 Rows，释放单连接供后续事务使用。
@@ -332,11 +274,6 @@ func (s *Store) SaveTask(v *domain.Task) error {
 	}
 	return tx.Commit()
 }
-
-/* 历史资产：SaveContent/SaveTask 仅更新 payload 和 tasks.status，未同步帖子及子资源状态。
-_, e = s.db.Exec("UPDATE content_items SET payload=? WHERE id=?", b, v.ID)
-_, e = s.db.Exec("UPDATE tasks SET status=?,payload=? WHERE id=?", v.Status, b, v.ID)
-*/
 
 // insertTask 在调用者的事务中写入，扫描记录和下载任务同时提交。
 // 活动任务唯一索引约束 queued 和 running，历史尝试仍保留。

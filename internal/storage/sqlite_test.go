@@ -173,20 +173,11 @@ func TestContentAndProfileIdentity(t *testing.T) {
 	}
 }
 
-// 旧库只补入新字段，用户已有设置和再次重启后的自定义预算保持原样。
-func TestPipelineSettingsMigrationAndPersistence(t *testing.T) {
+// 新库直接初始化流水线配置，保存后的预算在重启时保持原值。
+func TestPipelineSettingsInitializationAndPersistence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "media.db")
 	defaults := config.Defaults()
 	s, err := Open(path, defaults)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = s.db.Exec(`UPDATE app_settings SET payload=json_remove(payload,'$.pipeline')`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.Close()
-	s, err = Open(path, defaults)
 	if err != nil {
 		t.Fatal(err)
 	}

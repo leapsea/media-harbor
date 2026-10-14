@@ -9,7 +9,7 @@ import (
 )
 
 // PostTask 是 B 层；清单完整且所有期望的 C 层资源完成后才标记完成。
-// 旧索引无法证明轮播总数时保留清单待确认，不能只凭第一张图片跳过帖子。
+// 生产者尚未确认资源总数时保持清单待确认，不凭已发现条目判定完成。
 type PostTask struct {
 	ID               int64     `json:"id"`
 	SubscriptionID   int64     `json:"subscription_id"`
@@ -26,7 +26,7 @@ type PostTask struct {
 }
 
 // DownloadItem 是 C 层；一个轮播资源或视频的一个可选产物拥有独立持久状态。
-// ContentID 保持现有文件索引和执行记录的身份，升级不移动媒体或改写下载路径。
+// ContentID 关联资源文件集合及其执行记录，下载路径由该集合管理。
 type DownloadItem struct {
 	ID        int64            `json:"id"`
 	PostID    int64            `json:"post_id"`
@@ -115,7 +115,7 @@ func GatePost(ctx context.Context, post PostCandidate) (string, error) {
 	return "continue", nil
 }
 
-// PostScanner 声明扫描器在资源解析前支持 B 层核对，保留旧工具的流式兼容入口。
+// PostScanner 声明扫描器在资源解析前支持 B 层核对。
 type PostScanner interface{ SupportsPostTasks() bool }
 
 // PostDownloadRow 是任务详情唯一的数据源，B/C 为主体，执行账本只提供操作与排序信息。

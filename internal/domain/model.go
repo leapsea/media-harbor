@@ -58,9 +58,9 @@ type ContentFile struct {
 
 // Content 是下载去重的最小单元；Instagram 轮播的每张媒体具有独立 ID。
 type Content struct {
-	PostID         int64         `json:"post_id,omitempty"`         // B 层归属，原内容 ID 继续对应文件索引。
-	ExpectedAssets int           `json:"expected_assets,omitempty"` // SDK 提供的整帖资源总数，0 表示未知。
-	SourceTaskID   int64         `json:"-"`                         // 本次扫描来源只用于关联下载批次，不进入内容索引。
+	PostID         int64         `json:"post_id,omitempty"` // B 层归属，原内容 ID 继续对应文件索引。
+	ExpectedAssets int           `json:"expected_assets"`   // SDK 提供的整帖资源总数，0 表示未知。
+	SourceTaskID   int64         `json:"-"`                 // 本次扫描来源只用于关联下载批次，不进入内容索引。
 	ChannelID      string        `json:"channel_id,omitempty"`
 	Availability   string        `json:"availability,omitempty"`
 	MediaType      string        `json:"media_type,omitempty"`

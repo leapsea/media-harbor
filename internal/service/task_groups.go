@@ -2,7 +2,6 @@ package service
 
 import (
 	"log/slog"
-	"media-harbor/internal/config"
 	"media-harbor/internal/domain"
 	"sort"
 	"time"
@@ -170,8 +169,5 @@ func (a *App) GroupLog(subscriptionID int64) (string, error) {
 		return "", err
 	}
 	limit := settings.UI.TaskLogLines
-	if limit == 0 {
-		limit = config.Defaults().UI.TaskLogLines
-	}
 	return a.readSubscriptionLogTail(sub, limit)
 }

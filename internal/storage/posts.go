@@ -44,7 +44,7 @@ func (s *Store) RegisterPost(sid int64, platform string, item domain.Content, o 
 	}
 	var raw []byte
 	var existing domain.Content
-	// 文件索引用于保持旧身份；B/C 是新的完整性与子任务状态来源。
+	// 文件索引保存媒体集合；B/C 是完整性与子任务状态的来源。
 	// 未命中索引说明这是新资源，后续入队事务会建立 C 和执行账本。
 	lookup := tx.QueryRow("SELECT payload FROM content_items WHERE subscription_id=? AND remote_id=?", sid, item.RemoteID).Scan(&raw)
 	if lookup == nil {
@@ -69,7 +69,7 @@ func (s *Store) RegisterPost(sid int64, platform string, item domain.Content, o 
 
 // registerPost 与创建 C 共用事务，B 不会在部分资源入库时提前完成。
 // 新建记录先取得主键再发布 JSON 快照，整个过程未提交时对其他读取不可见。
-// 解析确认资源总数以后才设置 manifest_complete，迁移推测不进入这个路径。
+// 解析确认资源总数以后才设置 manifest_complete，不以已发现条目数量推测总数。
 // YouTube 的单视频清单由已保存的期望选项确定，评论与元数据分别计数。
 func registerPost(tx *sql.Tx, sid int64, platform string, item domain.Content, o domain.YouTubeOptions) (domain.PostTask, error) {
 	key := domain.PostIdentity(platform, item)
@@ -123,8 +123,8 @@ func registerPost(tx *sql.Tx, sid int64, platform string, item domain.Content, o
 
 // attachContent 保留原内容/执行 ID，创建独立 C 记录；任务表只作为执行尝试与队列账本。
 // A 和设置在该事务内读取，C 的期望产物使用同一份配置视图。
-// 原内容记录继续保存文件索引，PostID 让旧接口也能定位真实 B。
-// 迁移只有首次关联会创建 C，重启和重复扫描使用唯一约束保持幂等。
+// 媒体集合记录文件索引，PostID 明确关联到 B。
+// 新资源生成 C，重复扫描使用唯一约束保持身份及执行状态。
 func (s *Store) attachContent(tx *sql.Tx, item *domain.Content) error {
 	var raw []byte
 	var sub domain.Subscription
@@ -149,9 +149,7 @@ func (s *Store) attachContent(tx *sql.Tx, item *domain.Content) error {
 	if err != nil {
 		return err
 	}
-	// 已有关联代表新增产物，不能用原视频的 completed 初始化这个新 C。
-	// 迁移首次关联则保留旧终态，Instagram 的未知清单仍阻止 B 提前完成。
-	wasAttached := item.PostID != 0
+	// 新增的 C 总是待执行，不继承媒体集合或已有视频的完成状态。
 	item.PostID = p.ID
 	// 新的期望清单不删除旧资源，只调整 required 标记。
 	// 已下载文件与历史记录保持可追溯；停用子项不再参与 B 的完成计数。
@@ -160,10 +158,7 @@ func (s *Store) attachContent(tx *sql.Tx, item *domain.Content) error {
 		return err
 	}
 	for _, kind := range domain.ExpectedKinds(sub.Platform, o) {
-		d := domain.DownloadItem{Required: true, PostID: p.ID, ContentID: item.ID, Kind: kind, Status: item.Status, Paths: item.Paths, UpdatedAt: time.Now()}
-		if wasAttached && d.Status == "completed" {
-			d.Status = "queued"
-		}
+		d := domain.DownloadItem{Required: true, PostID: p.ID, ContentID: item.ID, Kind: kind, Status: "queued", Progress: domain.TransferProgress{Kind: kind, Status: "queued"}, Paths: []string{}, UpdatedAt: time.Now()}
 		r, err := tx.Exec("INSERT OR IGNORE INTO download_items(post_id,content_id,kind,payload) VALUES(?,?,?, '{}')", p.ID, item.ID, kind)
 		if err != nil {
 			return err
@@ -203,7 +198,7 @@ func (s *Store) attachContent(tx *sql.Tx, item *domain.Content) error {
 }
 
 // syncResources 将实际执行阶段写入 C；失败保留已经完成的子项，重试不会撤销产物。
-// 执行账本兼容旧控制接口，状态变化必须在同一事务传递到 C 和 B。
+// 执行账本记录工作单元，状态变化必须在同一事务传递到 C 和 B。
 // 先关闭资源读取的 Rows 再更新，避免单连接事务等待自身持有的读取游标。
 // 文件位置由现有分类结果关联，不另建一套扩展名或评论检测规则。
 func (s *Store) syncResources(tx *sql.Tx, cid int64, status string, progress []domain.TransferProgress, paths []string, message string) error {
@@ -244,7 +239,7 @@ func (s *Store) syncResources(tx *sql.Tx, cid int64, status string, progress []d
 	for _, d := range items {
 		if paths != nil {
 			d.Paths = paths
-			if len(content.Files) > 0 && d.Kind != "media" {
+			if d.Kind != "media" {
 				d.Paths = []string{}
 				for _, file := range content.Files {
 					match := slices.Contains(file.Tags, d.Kind)
@@ -401,60 +396,6 @@ func refreshPost(tx *sql.Tx, id int64) error {
 	}
 	_, err = tx.Exec("UPDATE post_tasks SET payload=? WHERE id=?", b, id)
 	return err
-}
-
-// migratePosts 幂等地将旧文件索引关联到 B/C，不重建旧任务或移动文件。
-// 旧 Instagram 缺少总数，迁移后清单仍待确认，后续一次解析即可补齐。
-// 所有旧内容的关联在一个事务内提交，异常时不留下半个升级批次。
-// 已关联的内容不会重复创建 C，运行中的旧执行由启动恢复逻辑接着处理。
-// 文件不参与复制和迁移，旧路径、归档状态与内容身份全部保留。
-func (s *Store) migratePosts() error {
-	items, err := s.Contents()
-	if err != nil {
-		return err
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var applied int
-	if err = tx.QueryRow("SELECT COUNT(*) FROM task_model_migrations WHERE name='post-resource-progress-v1'").Scan(&applied); err != nil {
-		return err
-	}
-	for i := range items {
-		if items[i].PostID == 0 {
-			if err = s.attachContent(tx, &items[i]); err != nil {
-				return err
-			}
-		}
-		// 升级一次回放旧阶段记录，保存 completed/skipped、实际字节及可选产物不存在的结果。
-		// 不仅依据父任务的 completed 初始化所有子项，避免详情丢失“无需下载”语义。
-		if applied == 0 {
-			var raw []byte
-			var task domain.Task
-			readErr := tx.QueryRow("SELECT payload FROM tasks WHERE content_id=? ORDER BY id DESC LIMIT 1", items[i].ID).Scan(&raw)
-			if readErr == sql.ErrNoRows {
-				continue
-			}
-			if readErr != nil {
-				return readErr
-			}
-			if err = json.Unmarshal(raw, &task); err != nil {
-				return err
-			}
-			if err = s.syncResources(tx, items[i].ID, task.Status, task.Progress, items[i].Paths, task.Error); err != nil {
-				return err
-			}
-		}
-	}
-	// 空数据库无需标记历史迁移；首次真实旧索引升级完成后才发布版本标记。
-	if applied == 0 && len(items) > 0 {
-		if _, err = tx.Exec("INSERT INTO task_model_migrations(name) VALUES('post-resource-progress-v1')"); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
 }
 
 // PostDownloadRows 一次关联 B/C 与文件索引、最新执行记录；调试范围仍按媒体条目限制。

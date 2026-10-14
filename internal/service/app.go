@@ -284,9 +284,6 @@ func (a *App) Settings() (domain.Settings, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	settings, err := a.Repo.Settings()
-	if settings.UI.TaskLogLines == 0 {
-		settings.UI.TaskLogLines = config.Defaults().UI.TaskLogLines
-	}
 	if !ArchiveMounted(a.directories) {
 		settings.AutoArchive = false
 	}
@@ -302,14 +299,6 @@ func (a *App) SaveSettings(s domain.Settings) error {
 	if s.YouTubeConcurrent < 1 || s.InstagramConcurrent < 1 {
 		return fmt.Errorf("并发数量至少为 1")
 	}
-	// 兼容旧客户端整体保存；新增字段缺席时沿用当前流水线配置。
-	if s.Pipeline == (domain.PipelineSettings{}) {
-		current, err := a.Repo.Settings()
-		if err != nil {
-			return err
-		}
-		s.Pipeline = current.Pipeline
-	}
 	if s.Pipeline.QueueCapacity < 1 || s.Pipeline.InstagramSourceCacheTTLMinutes < 1 || s.Pipeline.InstagramSourceCacheCapacity < 1 {
 		return fmt.Errorf("队列容量与缓存配置必须为正整数")
 	}
@@ -318,13 +307,12 @@ func (a *App) SaveSettings(s domain.Settings) error {
 			return fmt.Errorf("请求窗口与请求数必须为正整数，间隔与冷却不能为负数")
 		}
 	}
-	// 旧客户端缺席休眠字段时保留当前配置，关闭操作仍携带时间窗口。
-	if s.Sleep == (domain.SleepSettings{}) {
-		current, err := a.Repo.Settings()
-		if err != nil {
-			return err
-		}
-		s.Sleep = current.Sleep
+	// 客户端保存当前完整结构，不从已保存数据补入缺席字段。
+	if s.Sleep.Start == "" || s.Sleep.End == "" {
+		return fmt.Errorf("休眠时间必须为 HH:mm")
+	}
+	if s.Sleep.Timezone == "" {
+		return fmt.Errorf("休眠时区不能为空")
 	}
 	if err := s.Sleep.Validate(); err != nil {
 		return err
@@ -337,9 +325,6 @@ func (a *App) SaveSettings(s domain.Settings) error {
 	case "zh-CN", "en", "hi", "ru", "ja":
 	default:
 		return fmt.Errorf("不支持的界面语言")
-	}
-	if s.UI.TaskLogLines == 0 {
-		s.UI.TaskLogLines = config.Defaults().UI.TaskLogLines
 	}
 	if s.UI.RecentDownloads < 1 || s.UI.HistoryPageSize < 1 || s.UI.TaskPageSize < 1 || s.UI.TaskLogLines < 1 {
 		return fmt.Errorf("界面展示数量至少为 1")
