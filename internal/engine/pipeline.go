@@ -159,7 +159,7 @@ func (c CLI) Prepare(ctx context.Context, sub domain.Subscription, item domain.C
 	if sub.Platform != "youtube" || c.pipeline(sub.Platform) == nil {
 		return nil
 	}
-	_, err := c.youtubeMetadata(ctx, sub, item, options, log, false)
+	_, err := c.youtubeMetadata(ctx, sub, item, options, log, item.Overwrite)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

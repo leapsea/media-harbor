@@ -79,7 +79,7 @@ def run():
         assert len(children)==2 and all(c['status']=='completed' for c in children), children
         assert all(c['progress']['bytes_total'] > 0 and c['progress']['bytes_done'] == c['progress']['bytes_total'] for c in children), children
         before = counts()
-        scan(ig,'full')
+        scan(ig,'scan')
         assert counts().get('/post/instagram/cached',0)==before.get('/post/instagram/cached',0), counts()
         (RUN/'data/fixture-items.json').write_text('["new","cached","older"]')
         before = counts()
@@ -102,7 +102,7 @@ def run():
         video = next(c for c in children if c['kind']=='video')
         assert video['progress']['bytes_total'] > 0 and video['progress']['bytes_done'] == video['progress']['bytes_total'], children
         before = counts()
-        scan(yt,'full')
+        scan(yt,'scan')
         assert counts().get('/post/youtube/single',0)==before.get('/post/youtube/single',0), counts()
         # GUI/CLI 同用的配置保存 API 修改订阅配置；下一次执行应从数据库取得新期望集合。
         yt['youtube'] = dict(settings['youtube'],thumbnail=True)

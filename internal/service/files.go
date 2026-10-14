@@ -71,6 +71,12 @@ func taskFiles(dir string) ([]string, error) {
 // 每完成一个文件就更新历史，后续文件失败仍能找到已归位产物。
 // 订阅模板为空才沿用系统模板。
 func (a *App) placeFiles(s domain.Subscription, c *domain.Content, dir string) error {
+	return a.placeFilesMode(s, c, dir, false)
+}
+
+// placeFilesMode 全量覆盖同类原文件，标题变更不会在原目录留下第二份视频。
+// 原位置来自文件索引，归档中的产物也在原位置更新，不额外复制回下载卷。
+func (a *App) placeFilesMode(s domain.Subscription, c *domain.Content, dir string, overwrite bool) error {
 	files, e := taskFiles(dir)
 	if e != nil {
 		return e
@@ -95,6 +101,10 @@ func (a *App) placeFiles(s domain.Subscription, c *domain.Content, dir string) e
 		dst := filepath.Join(a.Config.DownloadDir, renderPathAt(template, s, *c, filepath.Base(src), date))
 		// 已有产物所在目录保持不变，元数据覆盖同一个索引文件，不复制已下载媒体。
 		for _, old := range c.Paths {
+			if overwrite && sameArtifactSlot(src, old, s.Platform) {
+				dst = old
+				break
+			}
 			if strings.HasSuffix(src, ".info.json") && strings.HasSuffix(old, ".info.json") {
 				dst = old
 				break
@@ -132,6 +142,32 @@ func (a *App) placeFiles(s domain.Subscription, c *domain.Content, dir string) e
 		}
 	}
 	return a.Repo.SaveContent(c)
+}
+
+// sameArtifactSlot 只覆盖同扩展名与产物类型，音频提取及各语言字幕分别匹配。
+// 格式变化仍使用引擎的新扩展名，不把MP4字节写入不同格式后缀。
+func sameArtifactSlot(src, old, platform string) bool {
+	if filepath.Ext(src) != filepath.Ext(old) {
+		return false
+	}
+	a, b := fileTags(src, platform), fileTags(old, platform)
+	if len(a) == 0 || len(b) == 0 || a[0] != b[0] {
+		return false
+	}
+	if a[0] == "audio" {
+		return strings.Contains(src, ".extracted.") == strings.Contains(old, ".extracted.")
+	}
+	if a[0] == "subtitles" {
+		language := func(path string) string {
+			stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			if pos := strings.LastIndex(stem, "."); pos >= 0 {
+				return stem[pos:]
+			}
+			return ""
+		}
+		return language(src) == language(old)
+	}
+	return true
 }
 
 // archive 保留配置和待归档记录，不可用时由调度器延后处理。

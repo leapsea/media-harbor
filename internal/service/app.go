@@ -152,19 +152,38 @@ func (a *App) SaveSubscription(s *domain.Subscription) error {
 	return nil
 }
 
-// QueueScan 增量在已有索引处停止，全量和补全继续遍历平台可获取内容。
+// QueueScan 全量重建详情并覆盖文件，增量在已有索引处停止，补全保留记录检查缺项。
 // 历史逻辑：全量和增量共用平台枚举，仅以唯一内容 ID 决定新增下载。
 // 手动扫描不要求定时开关启用。
 // 同一订阅只能有一个未结束的扫描记录。
 func (a *App) QueueScan(id int64, kind string) (domain.Task, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if _, e := a.Repo.Subscription(id); e != nil {
+	sub, e := a.Repo.Subscription(id)
+	if e != nil {
 		return domain.Task{}, e
 	}
 	if kind != "full" && kind != "scan" && kind != "catchup" {
 		return domain.Task{}, fmt.Errorf("扫描类型无效")
 	}
+	if kind == "full" {
+		// 清理、取消意图与新扫描原子提交；成功后才停止旧引擎，不等待进程收尾。
+		task, err := a.Repo.ReinitializeSubscription(id)
+		if err != nil {
+			return task, err
+		}
+		for taskID, info := range a.activeInfo {
+			if info.SubscriptionID == id && a.active[taskID] != nil {
+				a.active[taskID]()
+			}
+		}
+		if err := a.writeSubscriptionLog(sub, task, time.Now(), "[全量初始化] 已清空帖子任务与下载资源记录；旧批次已取消；重新采集并覆盖本地文件"); err != nil {
+			slog.Warn("写入初始化日志失败", "subscription_id", id, "error", err)
+		}
+		a.wakeScheduler()
+		return task, nil
+	}
+	// 历史全量入口与增量一样仅 Enqueue，不清空详情，也不覆盖已有媒体。
 	tasks, e := a.Repo.SubscriptionTasks(id)
 	if e != nil {
 		return domain.Task{}, e
@@ -745,7 +764,13 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 				if settings.Debug.TestItemLimit > 0 && discovered >= settings.Debug.TestItemLimit {
 					break
 				}
-				x, y, z, w, v, err := a.reconcileScanLocked(s.ID, []domain.Content{item}, t.Kind == "catchup")
+				var x, y, z, w, v int
+				var err error
+				if t.Kind == "full" {
+					x, y, v, err = a.reconcileFullScanLocked(s.ID, item)
+				} else {
+					x, y, z, w, v, err = a.reconcileScanLocked(s.ID, []domain.Content{item}, t.Kind == "catchup")
+				}
 				if err != nil {
 					return err
 				}
@@ -838,14 +863,20 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 	if s.YouTube != nil {
 		options = *s.YouTube
 	}
-	if _, planErr := a.Repo.RegisterPost(s.ID, s.Platform, c, options); planErr != nil {
+	if _, planErr := a.registerPost(ctx, s.ID, s.Platform, c, options); planErr != nil {
 		a.finish(t, planErr)
 		return
 	}
 	dir := a.WorkPath(t)
 	log(mediaItemLog(s.Platform, c, "开始下载"))
 	// 历史日志将视频称作帖子，并输出无意义的资源序号零与未知发布日期。
-	e = a.Engine.Download(ctx, s, c, options, dir, log)
+	download := c
+	if t.Overwrite {
+		// 文件索引用于原位置归位，传给下载器的副本不允许复用初始化前的产物。
+		download.Paths, download.Files, download.Tags = nil, nil, nil
+		log("[全量下载] 忽略原文件缓存；媒体 " + c.RemoteID + "；下载完成后覆盖原位置")
+	}
+	e = a.Engine.Download(ctx, s, download, options, dir, log)
 	log(fmt.Sprintf("下载引擎已返回；成功 %t；取消 %t；准备读取产物并提交完成状态", e == nil, ctx.Err() != nil))
 	downloadErr := e
 	// 以当前语言的下载元数据刷新标题，已存在的媒体文件也无需重新下载。
@@ -886,10 +917,10 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 		// 即使后续阶段失败，也记录已经完成的产物，重试只补剩余部分。
 		files, fileErr := taskFiles(dir)
 		if fileErr == nil && len(files) > 0 {
-			if placeErr := a.placeFiles(s, &c, dir); placeErr != nil && e == nil {
+			if placeErr := a.placeFilesMode(s, &c, dir, t.Overwrite); placeErr != nil && e == nil {
 				e = placeErr
 			}
-		} else if e == nil && len(engine.Inventory(c, "").Paths) == 0 {
+		} else if e == nil && (t.Overwrite || len(engine.Inventory(c, "").Paths) == 0) {
 			e = fileErr
 		}
 		if e == nil {

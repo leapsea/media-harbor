@@ -58,6 +58,7 @@ type ContentFile struct {
 
 // Content 是下载去重的最小单元；Instagram 轮播的每张媒体具有独立 ID。
 type Content struct {
+	Overwrite      bool          `json:"-"`                 // 全量生产者要求刷新解析；文件位置仍由持久索引维护。
 	PostID         int64         `json:"post_id,omitempty"` // 所属帖子任务，原内容 ID 继续对应文件索引。
 	ExpectedAssets int           `json:"expected_assets"`   // SDK 提供的整帖资源总数，0 表示未知。
 	SourceTaskID   int64         `json:"-"`                 // 本次扫描来源只用于关联下载批次，不进入内容索引。
@@ -100,6 +101,7 @@ func (e *PaidVideoSkippedError) Error() string {
 // queued、running、completed、failed、cancelled、skipped 是持久任务状态。
 // Task 的状态持久化，运行日志单独存储于运行数据目录。
 type Task struct {
+	Overwrite      bool               `json:"overwrite,omitempty"` // 全量下载跨重启仍不复用初始化前的文件。
 	QueuedAt       time.Time          `json:"queued_at,omitempty"` // 重试仍保留任务 ID，但使用本次入队时间排序。
 	SourceTaskID   int64              `json:"source_task_id,omitempty"`
 	Progress       []TransferProgress `json:"progress,omitempty"`
@@ -285,6 +287,8 @@ type Repository interface {
 	Subscription(int64) (Subscription, error)
 	SaveSubscription(*Subscription) error
 	DeleteSubscription(int64) error
+	ReinitializeSubscription(int64) (Task, error)
+	QueueFullContent(int64, Content) (bool, error)
 	Contents() ([]Content, error)
 	Content(int64) (Content, error)
 	SaveContent(*Content) error

@@ -20,13 +20,13 @@ func (e *preparationEngine) Scan(_ context.Context, _ domain.Subscription, _ int
 }
 
 func (e *preparationEngine) Prepare(_ context.Context, sub domain.Subscription, item domain.Content, _ domain.YouTubeOptions, _ func(string)) error {
-	// 已有格式的重复和完成项不能被交给解析器重新请求。
+	// 全量包含已完成内容，生产者仍按资源身份避免同一轮重复请求。
 	e.prepared = append(e.prepared, item.RemoteID)
 	e.languages = append(e.languages, sub.RequestLanguage)
 	return nil
 }
 
-func TestProducerPreparesOnlyNeededDownloads(t *testing.T) {
+func TestFullProducerPreparesEveryUniqueDownload(t *testing.T) {
 	e := &preparationEngine{}
 	a := testApp(t, e)
 	sub := addSub(t, a, "preparation", "youtube")
@@ -36,7 +36,7 @@ func TestProducerPreparesOnlyNeededDownloads(t *testing.T) {
 		}
 	}
 	items, _ := a.Repo.Contents()
-	// 保留失败索引，重试需要新的地址；完成项仍由本地索引决定跳过。
+	// 保留原状态，验证全量不再跳过完成项，失败项也重新解析。
 	for _, item := range items {
 		item.Status = "failed"
 		if item.RemoteID == "done" {
@@ -52,10 +52,10 @@ func TestProducerPreparesOnlyNeededDownloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings, _ := a.Repo.Settings()
-	if !reflect.DeepEqual(e.languages, []string{settings.UI.Language, settings.UI.Language}) {
+	if !reflect.DeepEqual(e.languages, []string{settings.UI.Language, settings.UI.Language, settings.UI.Language}) {
 		t.Fatalf("准备和消费者的语言缓存身份不一致：%v", e.languages)
 	}
-	if !reflect.DeepEqual(e.prepared, []string{"failed", "new"}) {
+	if !reflect.DeepEqual(e.prepared, []string{"done", "failed", "new"}) {
 		// 同一批次重复的新媒体也只能准备一次，不放大平台请求。
 		t.Fatalf("重复解析：%v", e.prepared)
 	}

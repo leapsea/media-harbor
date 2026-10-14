@@ -28,6 +28,7 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 		postAware = scanner.SupportsPostTasks()
 	}
 	var boundary atomic.Bool
+	seenFull := map[string]bool{}
 	if postAware {
 		ctx = domain.WithPostGate(ctx, func(candidate domain.PostCandidate) (string, error) {
 			current, readErr := a.Repo.Subscription(sub.ID)
@@ -51,15 +52,12 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 			if readErr != nil {
 				return "", readErr
 			}
-			if kind != "catchup" && post.ManifestComplete && post.Status == "completed" && slices.Equal(post.Kinds, domain.ExpectedKinds(current.Platform, options)) {
-				if kind == "scan" {
-					boundary.Store(true)
-					log(fmt.Sprintf("增量扫描命中本地缓存；帖子 %s；帖子任务的全部 %d 个下载资源已完成，停止后续历史检查与分页", key, post.Expected))
-					return "stop", nil
-				}
-				log(fmt.Sprintf("数据库核对帖子任务已完成；帖子 %s；跳过解析与下载，继续下一条", key))
-				return "skip", nil
+			if kind == "scan" && post.ManifestComplete && post.Status == "completed" && slices.Equal(post.Kinds, domain.ExpectedKinds(current.Platform, options)) {
+				boundary.Store(true)
+				log(fmt.Sprintf("增量扫描命中本地缓存；帖子 %s；帖子任务的全部 %d 个下载资源已完成，停止后续历史检查与分页", key, post.Expected))
+				return "stop", nil
 			}
+			// 历史全量对已完成帖子返回 skip；初始化现在必须重新解析所有发现条目。
 			return "continue", nil
 		})
 	}
@@ -98,6 +96,13 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 			return consume(batch)
 		}
 		for _, item := range batch.Items {
+			// 全量同一轮也只解析每个媒体一次，平台重复交付不放大请求或下载。
+			if kind == "full" {
+				if seenFull[item.RemoteID] {
+					continue
+				}
+				seenFull[item.RemoteID] = true
+			}
 			// 每个帖子任务的决策读取当前订阅配置和设置，GUI/CLI 修改参与下一条处理。
 			current, readErr := a.Repo.Subscription(sub.ID)
 			if readErr != nil {
@@ -124,11 +129,12 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 					continue
 				}
 			}
-			post, registerErr := a.Repo.RegisterPost(sub.ID, current.Platform, item, options)
+			post, registerErr := a.registerPost(ctx, sub.ID, current.Platform, item, options)
 			if registerErr != nil {
 				return registerErr
 			}
 			item.PostID = post.ID
+			item.Overwrite = kind == "full"
 
 			// 先检查增量边界，已有内容不再请求完整视频信息或媒体接口。
 			if known[item.RemoteID] {
@@ -144,7 +150,7 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 			if preparer, ok := a.Engine.(domain.MediaPreparer); ok {
 				// 已完成且无需补全、已排队或正在下载的条目不额外准备格式清单。
 				existing, exists := indexed[item.RemoteID]
-				needed := !exists || (existing.Status != "queued" && existing.Status != "running" &&
+				needed := kind == "full" || !exists || (existing.Status != "queued" && existing.Status != "running" &&
 					(existing.Status != "completed" || (kind == "catchup" && engine.NeedsSupplement(sub.Platform, existing, options))))
 				if postAware && exists && existing.Status == "completed" {
 					required, readErr := a.contentNeedsDownload(existing)

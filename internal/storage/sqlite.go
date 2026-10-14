@@ -313,49 +313,91 @@ func (s *Store) Enqueue(sid, cid int64, kind string) (domain.Task, error) {
 // 重复内容直接返回，不更改已有失败或完成状态。
 // 下载失败的重试由应用层显式操作。
 func (s *Store) AddContentAndTask(sid int64, v domain.Content) error {
+	_, err := s.addContentAndTask(sid, v, false)
+	return err
+}
+
+// addContentAndTask 保留增量幂等性，全量则重用文件索引并创建新的覆盖下载尝试。
+func (s *Store) addContentAndTask(sid int64, v domain.Content, overwrite bool) (bool, error) {
 	tx, e := s.db.Begin()
 	if e != nil {
-		return e
+		return false, e
 	}
 	defer tx.Rollback()
+	if overwrite {
+		// 初始化前的生产者即使晚到，也不能给新批次写入下载资源或执行。
+		var latest int64
+		if e = tx.QueryRow("SELECT COALESCE(MAX(id),0) FROM tasks WHERE subscription_id=? AND kind='full' AND content_id=0 AND json_extract(payload,'$.overwrite')=1", sid).Scan(&latest); e != nil {
+			return false, e
+		}
+		if v.SourceTaskID == 0 || v.SourceTaskID != latest {
+			return false, errors.New("全量下载不属于当前初始化批次")
+		}
+	}
 	v.SubscriptionID = sid
 	v.Status = "queued"
 	v.Paths = []string{}
 	r, e := tx.Exec("INSERT OR IGNORE INTO content_items(subscription_id,remote_id,payload) VALUES(?,?, '{}')", sid, v.RemoteID)
 	if e != nil {
-		return e
+		return false, e
 	}
 	n, e := r.RowsAffected()
 	if e != nil {
-		return e
+		return false, e
+	}
+	if n == 0 && !overwrite {
+		return false, nil
 	}
 	if n == 0 {
-		return nil
+		var raw []byte
+		var old domain.Content
+		if e = tx.QueryRow("SELECT payload FROM content_items WHERE subscription_id=? AND remote_id=?", sid, v.RemoteID).Scan(&raw); e != nil {
+			return false, e
+		}
+		if e = json.Unmarshal(raw, &old); e != nil {
+			return false, e
+		}
+		// 同一次扫描重复交付同一资源时，不重下也不插入第二条执行。
+		var duplicate int
+		if e = tx.QueryRow("SELECT COUNT(*) FROM tasks WHERE subscription_id=? AND content_id=? AND json_extract(payload,'$.source_task_id')=?", sid, old.ID, v.SourceTaskID).Scan(&duplicate); e != nil {
+			return false, e
+		}
+		if duplicate > 0 {
+			return false, nil
+		}
+		v.ID, v.Paths, v.Tags, v.Files, v.Archived = old.ID, old.Paths, old.Tags, old.Files, old.Archived
+		if v.Published.IsZero() {
+			v.Published = old.Published
+		}
+	} else {
+		v.ID, e = r.LastInsertId()
 	}
-	v.ID, e = r.LastInsertId()
 	if e != nil {
-		return e
+		return false, e
 	}
 	b, e := json.Marshal(v)
 	if e != nil {
-		return e
+		return false, e
 	}
 	if _, e = tx.Exec("UPDATE content_items SET payload=? WHERE id=?", b, v.ID); e != nil {
-		return e
+		return false, e
 	}
 	// SQLite 内容编号可能复用；新内容不继承旧内容的历史清空状态。
 	if _, e = tx.Exec("DELETE FROM download_history_cleared WHERE content_id=?", v.ID); e != nil {
-		return e
+		return false, e
 	}
-	t := domain.Task{SubscriptionID: sid, ContentID: v.ID, Kind: "download", Status: "queued", CreatedAt: time.Now()}
+	t := domain.Task{SubscriptionID: sid, ContentID: v.ID, Kind: "download", Status: "queued", CreatedAt: time.Now(), Overwrite: overwrite}
 	t.QueuedAt, t.SourceTaskID = t.CreatedAt, v.SourceTaskID
 	if e = insertTask(tx, &t); e != nil {
-		return e
+		return false, e
 	}
 	if e = s.attachContent(tx, &v); e != nil {
-		return e
+		return false, e
 	}
-	return tx.Commit()
+	if e = tx.Commit(); e != nil {
+		return false, e
+	}
+	return true, nil
 }
 
 // RecordVersion 将运行依赖的版本与应用设置分开存储。

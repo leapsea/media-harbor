@@ -68,7 +68,7 @@ func TestPostGateChecksWholeManifestBeforeParsing(t *testing.T) {
 			if kind == "scan" {
 				want = []string{"partial"}
 			}
-			if kind == "catchup" {
+			if kind == "catchup" || kind == "full" {
 				want = []string{"partial", "done", "next"}
 			}
 			if !reflect.DeepEqual(e.parsed, want) {

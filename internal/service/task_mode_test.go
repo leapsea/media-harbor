@@ -137,7 +137,7 @@ func TestProfileScanAfterContent(t *testing.T) {
 	}
 }
 
-// TestUnstartedTaskLog 未启动与取消的任务没有运行日志，旧式文件不会被读取。
+// TestUnstartedTaskLog 未启动与取消任务只有初始化事件，不读取旧式任务文件。
 func TestUnstartedTaskLog(t *testing.T) {
 	app := testApp(t, fakeEngine{})
 	sub := addSub(t, app, "author", "instagram")
@@ -162,7 +162,7 @@ func TestUnstartedTaskLog(t *testing.T) {
 		if err != nil || strings.Contains(raw, "redirect") {
 			t.Fatalf("group=%s err=%v", raw, err)
 		}
-		if raw != "" {
+		if !strings.Contains(raw, "[全量初始化]") || strings.Contains(raw, "开始解析订阅内容") {
 			t.Fatal(raw)
 		}
 	}

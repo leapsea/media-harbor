@@ -9,14 +9,18 @@ import (
 
 // TaskGroupStats 只聚合管理表格需要的字段，不在 Go 中解码完整任务 JSON 和传输进度数组。
 func (s *Store) TaskGroupStats(limit int) ([]domain.TaskGroupStats, error) {
-	const query = `WITH task_values AS (
- SELECT id, subscription_id, content_id, status,
-        COALESCE(json_extract(payload,'$.error'),'') AS error,
-        max(COALESCE(json_extract(payload,'$.created_at'),''),
-			COALESCE(json_extract(payload,'$.queued_at'),''),
-            COALESCE(json_extract(payload,'$.started_at'),''),
-            COALESCE(json_extract(payload,'$.finished_at'),'')) AS changed_at
- FROM tasks
+	// 聚合与调度采用同一初始化边界，旧账本保留但不占新一轮的展示或测试范围。
+	const query = `WITH resets AS (
+ SELECT subscription_id, MAX(id) AS reset_id FROM tasks WHERE kind='full' AND content_id=0 AND json_extract(payload,'$.overwrite')=1 GROUP BY subscription_id
+), task_values AS (
+ SELECT t.id, t.subscription_id, t.content_id, t.status,
+        COALESCE(json_extract(t.payload,'$.error'),'') AS error,
+        max(COALESCE(json_extract(t.payload,'$.created_at'),''),
+			COALESCE(json_extract(t.payload,'$.queued_at'),''),
+            COALESCE(json_extract(t.payload,'$.started_at'),''),
+            COALESCE(json_extract(t.payload,'$.finished_at'),'')) AS changed_at
+ FROM tasks t LEFT JOIN resets r ON r.subscription_id=t.subscription_id
+ WHERE t.content_id=0 OR t.id>COALESCE(r.reset_id,0)
 ), ranked_downloads AS (
  SELECT *, ROW_NUMBER() OVER (PARTITION BY subscription_id ORDER BY id ASC) AS row_num
  FROM task_values WHERE content_id<>0
@@ -104,7 +108,8 @@ ORDER BY all_counts.updated_at DESC`
 // 测试模式保留 selectedTasks 的语义：最早的 N 条媒体任务和最新扫描。
 func (s *Store) TaskContentRows(subscriptionID int64, limit int) ([]domain.TaskContentRow, error) {
 	const query = `WITH scoped_tasks AS (
- SELECT id, subscription_id, content_id, payload FROM tasks WHERE subscription_id=?
+	 SELECT id, subscription_id, content_id, payload FROM tasks t WHERE subscription_id=?
+ AND (content_id=0 OR id>COALESCE((SELECT MAX(id) FROM tasks r WHERE r.subscription_id=t.subscription_id AND r.kind='full' AND r.content_id=0 AND json_extract(r.payload,'$.overwrite')=1),0))
 ), ranked_downloads AS (
  SELECT *, ROW_NUMBER() OVER (ORDER BY id ASC) AS row_num
  FROM scoped_tasks WHERE content_id<>0

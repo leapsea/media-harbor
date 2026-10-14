@@ -25,7 +25,7 @@ func (manyEngine) Scan(_ context.Context, _ domain.Subscription, _ int, _ func(s
 
 // TestLimitedScan 验证只入队十项，以及第二次扫描正确报告去重。
 func TestLimitedScan(t *testing.T) {
-	// 真实数据库保留两次扫描的记录，重复扫描必须遵循既有去重逻辑。
+	// 两次全量复用文件索引，但每次重建详情并重新下载调试范围。
 	a := testApp(t, manyEngine{})
 	settings, _ := a.Repo.Settings()
 	settings.Debug.TestItemLimit = 10
@@ -65,7 +65,7 @@ func TestLimitedScan(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 扫描日志说明实际处理数量和队列结果，不展示执行次数。
-	for _, want := range []string{"累计发现 10", "新增 0 / 重新排队 0 / 已存在 10", "执行结束"} {
+	for _, want := range []string{"累计发现 10", "新增 0 / 重新排队 10 / 已存在 0", "执行结束"} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("missing %s: %s", want, raw)
 		}

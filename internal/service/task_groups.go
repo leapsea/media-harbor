@@ -30,6 +30,13 @@ func selectedTasks(tasks []domain.Task, subscriptionID int64, limit int) []domai
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
 	// 使用副本排序，调用者的原始任务快照不被改变。
 	selected := []domain.Task{}
+	// 全量初始化开始新的发现范围；旧下载账本不占当前调试前N条或显示进度。
+	var resetID int64
+	for _, task := range ordered {
+		if task.SubscriptionID == subscriptionID && task.Kind == "full" && task.ContentID == 0 && task.Overwrite {
+			resetID = task.ID
+		}
+	}
 	// 下载 ID 升序对应最初发现顺序，恢复或重试不会另选十条。
 	var scan *domain.Task
 	downloads := 0
@@ -40,6 +47,9 @@ func selectedTasks(tasks []domain.Task, subscriptionID int64, limit int) []domai
 		if task.ContentID == 0 {
 			current := task
 			scan = &current
+			continue
+		}
+		if task.ID < resetID {
 			continue
 		}
 		if limit > 0 && downloads >= limit {
