@@ -3,10 +3,46 @@ package engine
 import (
 	"context"
 	"errors"
+	"media-harbor/internal/config"
 	"media-harbor/internal/domain"
 	"testing"
 	"time"
 )
+
+// 实际 Configure 必须给各平台分别分配窗口，同时覆盖生产者与下载消费者入口。
+func TestPlatformSleepConfigurationIsolation(t *testing.T) {
+	for _, paused := range []string{"instagram", "youtube"} {
+		t.Run(paused, func(t *testing.T) {
+			c := NewCLI(t.TempDir(), nil)
+			s := config.Defaults()
+			awake := "youtube"
+			if paused == "instagram" {
+				s.Sleep.Instagram = engineSleepNow()
+			} else {
+				s.Sleep.YouTube = engineSleepNow()
+				awake = "instagram"
+			}
+			c.Configure(s)
+			for _, acquire := range []func(context.Context, func(string)) (func(), error){c.pipeline(awake).acquireProducer, c.pipeline(awake).acquireConsumer} {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				release, err := acquire(ctx, func(string) {})
+				cancel()
+				if err != nil {
+					t.Fatal("未休眠平台被阻止", err)
+				}
+				release()
+			}
+			for _, acquire := range []func(context.Context, func(string)) (func(), error){c.pipeline(paused).acquireProducer, c.pipeline(paused).acquireConsumer} {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+				release, err := acquire(ctx, func(string) {})
+				cancel()
+				if release != nil || !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatal("休眠平台仍获得新工作许可", err)
+				}
+			}
+		})
+	}
+}
 
 // engineSleepNow 生成包含当前时刻的窗口，避免依赖测试执行时区。
 func engineSleepNow() domain.SleepSettings {

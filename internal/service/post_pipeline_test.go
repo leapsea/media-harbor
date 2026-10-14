@@ -154,12 +154,12 @@ func TestCurrentSettingsRejectMissingFieldsWithoutBackfill(t *testing.T) {
 		case "pipeline":
 			candidate.Pipeline = domain.PipelineSettings{}
 		case "sleep":
-			candidate.Sleep = domain.SleepSettings{}
+			candidate.Sleep = domain.PlatformSleepSettings{}
 		case "log_lines":
 			candidate.UI.TaskLogLines = 0
 		case "disabled_sleep_start":
-			candidate.Sleep.Enabled = false
-			candidate.Sleep.Start = ""
+			candidate.Sleep.Instagram.Enabled = false
+			candidate.Sleep.Instagram.Start = ""
 		}
 		if err = a.SaveSettings(candidate); err == nil {
 			t.Fatalf("缺席字段被旧值补齐：%s", field)
@@ -171,7 +171,7 @@ func TestCurrentSettingsRejectMissingFieldsWithoutBackfill(t *testing.T) {
 	}
 	// 当前完整结构仍可直接保存；关闭有效窗口不改变休眠功能的原有语义。
 	candidate := original
-	candidate.Sleep.Enabled = false
+	candidate.Sleep.Instagram.Enabled = false
 	if err = a.SaveSettings(candidate); err != nil {
 		t.Fatal(err)
 	}

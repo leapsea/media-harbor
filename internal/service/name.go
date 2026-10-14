@@ -19,7 +19,7 @@ func (a *App) ResolveName(ctx context.Context, s domain.Subscription) (string, e
 	if err != nil {
 		return "", err
 	}
-	if until := settings.Sleep.Until(time.Now()); !until.IsZero() {
+	if until := settings.Sleep.Until(s.Platform, time.Now()); !until.IsZero() {
 		return "", fmt.Errorf("休眠中，名称解析将在 %s 后可用", until.Format(time.RFC3339))
 	}
 	resolver, ok := a.Engine.(domain.NameResolver)
@@ -49,7 +49,7 @@ func (a *App) CreateSubscription(ctx context.Context, s *domain.Subscription) er
 		return a.writeSubscriptionLog(*s, domain.Task{SubscriptionID: s.ID}, started, "平台已停用；创建配置已保存；等待配置可用Cookie后解析作者与头像")
 	}
 	// 休眠期间只保存及排队，头像和身份在后续扫描中获取，创建接口即时返回。
-	if until := settings.Sleep.Until(started); !until.IsZero() {
+	if until := settings.Sleep.Until(s.Platform, started); !until.IsZero() {
 		s.StableID, s.CurrentName = "", ""
 		if err := a.SaveSubscription(s); err != nil {
 			return err

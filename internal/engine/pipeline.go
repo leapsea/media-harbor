@@ -112,7 +112,9 @@ func (c CLI) Configure(s domain.Settings) {
 		p.changed = make(chan struct{})
 		p.mu.Unlock()
 		p.requests.configure(options)
-		p.requests.configureSleep(s.Sleep)
+		// 每个平台的生产者与消费者只接收自己的休眠窗口。
+		p.requests.configureSleep(s.Sleep.For(platform))
+		// 历史逻辑：p.requests.configureSleep(s.Sleep) 将同一窗口发送到两个平台。
 	}
 	// 有效期按当前值判断，降低容量立即淘汰旧描述。
 	if c.instagram != nil {

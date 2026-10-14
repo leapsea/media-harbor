@@ -19,7 +19,7 @@ func TestSleepInitializationAndPersistence(t *testing.T) {
 		t.Fatal(got, err)
 	}
 	got.YouTubeConcurrent = 7
-	got.Sleep.Enabled, got.Sleep.Start, got.Sleep.End = true, "23:00", "07:00"
+	got.Sleep.Instagram.Enabled, got.Sleep.Instagram.Start, got.Sleep.Instagram.End = true, "23:00", "07:00"
 	if err = s.SaveSettings(got); err != nil {
 		t.Fatal(err)
 	}

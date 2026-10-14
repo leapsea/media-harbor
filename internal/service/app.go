@@ -35,7 +35,7 @@ type App struct {
 	active           map[int64]context.CancelFunc
 	activeInfo       map[int64]runningTaskInfo
 	queueWaits       map[int64]domain.PlatformRun
-	sleepUntil       time.Time
+	sleepUntil       map[string]time.Time
 	wake             chan struct{}
 	directories      []DirectoryStatus
 	wg               sync.WaitGroup
@@ -308,12 +308,6 @@ func (a *App) SaveSettings(s domain.Settings) error {
 		}
 	}
 	// 客户端保存当前完整结构，不从已保存数据补入缺席字段。
-	if s.Sleep.Start == "" || s.Sleep.End == "" {
-		return fmt.Errorf("休眠时间必须为 HH:mm")
-	}
-	if s.Sleep.Timezone == "" {
-		return fmt.Errorf("休眠时区不能为空")
-	}
 	if err := s.Sleep.Validate(); err != nil {
 		return err
 	}
@@ -503,18 +497,21 @@ func (a *App) tick(ctx context.Context) error {
 			}
 		}
 	}
-	// 到期任务仍入队；休眠仅阻止认领，不移动周期、不取消当前媒体。
-	until := settings.Sleep.Until(time.Now())
-	if !until.Equal(a.sleepUntil) {
-		if !until.IsZero() {
-			slog.Info("进入休眠，暂停生产及新下载", "stage", "sleep", "until", until, "timezone", settings.Sleep.Timezone)
-		} else if !a.sleepUntil.IsZero() {
-			slog.Info("休眠结束，恢复原平台队列", "stage", "sleep")
-		}
-		a.sleepUntil = until
+	// 到期任务仍入队；按平台计算休眠，当前媒体收尾不被取消。
+	// 原全局逻辑在此直接 return nil，会阻止另一平台认领任务。
+	if a.sleepUntil == nil {
+		a.sleepUntil = map[string]time.Time{}
 	}
-	if !until.IsZero() {
-		return nil
+	for _, platform := range []string{"instagram", "youtube"} {
+		until := settings.Sleep.Until(platform, time.Now())
+		if !until.Equal(a.sleepUntil[platform]) {
+			if !until.IsZero() {
+				slog.Info("平台进入休眠，暂停生产及新下载", "stage", "sleep", "platform", platform, "until", until, "timezone", settings.Sleep.For(platform).Timezone)
+			} else if !a.sleepUntil[platform].IsZero() {
+				slog.Info("平台休眠结束，恢复原队列", "stage", "sleep", "platform", platform)
+			}
+			a.sleepUntil[platform] = until
+		}
 	}
 	// 测试模式只认领每个订阅前 N 个下载，旧队列其余记录继续保留。
 	allowedDownloads := map[int64]bool{}
@@ -536,6 +533,10 @@ func (a *App) tick(ctx context.Context) error {
 	a.markSchedulerPhase("认领任务与分配并发名额")
 	for _, t := range tasks {
 		s, exists := subMap[t.SubscriptionID]
+		// 只跳过休眠平台的新工作，另一平台照常执行其队列。
+		if !a.sleepUntil[s.Platform].IsZero() {
+			continue
+		}
 		if !exists || !credentialStates[s.Platform].PlatformEnabled || t.Status != "queued" || (t.ContentID == 0 && busyScans[s.ID]) {
 			continue
 		}
@@ -695,7 +696,7 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 				case <-ticker.C:
 					// 历史资产：仅以 !queueWaiting.Load() 判断是否输出平台等待日志。
 					sleeping, _ := a.Repo.Settings()
-					if !queueWaiting.Load() && sleeping.Sleep.Until(time.Now()).IsZero() {
+					if !queueWaiting.Load() && sleeping.Sleep.Until(s.Platform, time.Now()).IsZero() {
 						log(fmt.Sprintf("等待平台返回媒体，扫描已运行 %s", time.Since(started).Round(time.Second)))
 					}
 				}

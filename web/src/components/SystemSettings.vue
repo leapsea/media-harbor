@@ -7,7 +7,7 @@ import YouTubeOptions from './YouTubeOptions.vue'
 import UISettingsOptions from './UISettingsOptions.vue'
 import StorageManagement from './StorageManagement.vue'
 import ToggleSwitch from 'primevue/toggleswitch'
-import HourMinutePicker from './HourMinutePicker.vue'
+import PlatformScheduling from './PlatformScheduling.vue'
 import { formatDate } from '../utils/formatDate'
 import { useHashNavigation } from '../composables/useHashNavigation'
 /**
@@ -16,8 +16,6 @@ import { useHashNavigation } from '../composables/useHashNavigation'
 const props = defineProps<{ settings: Settings | null }>()
 const store = useMediaStore()
 const form = ref<Settings | null>(null)
-/** 常用时区可直接选择；保留已有时区，避免其他分类保存时改变时间语义。 */
-const sleepTimezones = ['Asia/Singapore', 'Asia/Shanghai', 'Asia/Tokyo', 'Asia/Kolkata', 'Europe/Berlin', 'America/New_York', 'America/Los_Angeles', 'UTC']
 const debugEnabled = ref(false)
 const debugLimit = ref('10')
 /** 导航先挂载，真实配置返回后只初始化一次，轮询不覆盖未保存输入。 */
@@ -123,30 +121,7 @@ async function saveCookie() {
 async function removeCookie(platform: string) {
  if (await store.mutate(() => api(`/cookies/${platform}`, 'DELETE'), 'Cookie 已删除')) await loadCookieStatus(platform)
 }
-</script>
-<template>
- <nav class="settings-categories" :aria-label="t('设置分类')">
-  <button v-for="item in categories" :key="item.id" :aria-pressed="category === item.id" :class="{ selected: category === item.id }" @click="category = item.id">{{ t(item.label) }}</button>
- </nav>
- <!-- 分类导航已标明内容，卡片不重复显示分类标题。 -->
- <!-- 通用设置共用保存接口；分类切换不销毁控件或覆盖编辑副本。 -->
- <p v-if="!form && !['cookies', 'engines', 'storage'].includes(category)" class="empty">{{ t('加载中') }}</p>
- <form v-if="form" v-show="!['cookies', 'engines', 'storage'].includes(category)" class="settings-form" @submit.prevent="saveSettings">
-  <section v-show="category === 'display'" class="panel settings-panel" :aria-label="t('界面设置')">
-   <UISettingsOptions v-model="form.ui" />
-  </section>
-  <section v-show="category === 'files'" class="panel settings-panel" :aria-label="t('文件与归档设置')">
-   <div class="settings-group"><h3>{{ t("目录规则") }}</h3>
-   <div class="form-grid"><label class="wide">{{ t("默认目录模板") }}<input v-model="form.template" required></label></div>
-   <label class="check"><input v-model="form.use_upload_date" type="checkbox">{{ t("按 UP 主的上传 / 发布时间创建日期目录") }}</label>
-   </div>
-   <div class="settings-group"><h3>{{ t("自动归档") }}</h3>
-   <label class="check"><input v-model="form.auto_archive" type="checkbox" :disabled="!store.archiveMounted">{{ t("新任务默认开启自动归档") }}</label></div>
-  </section>
-  <section v-show="category === 'youtube'" class="panel settings-panel" :aria-label="t('YouTube 默认下载设置')">
-   <YouTubeOptions v-model="form.youtube" />
-  </section>
-  <section v-show="category === 'scheduling'" class="panel settings-panel" :aria-label="t('并发调度设置')">
+/* 历史模板：每日休眠曾位于平台配置之外，使用 form.sleep 的全局窗口。
    <!-- 每日休眠以24小时弹框选择小时分钟，保存仍沿用HH:mm与原时区。 -->
    <div class="settings-group"><h3>{{ t('每日休眠') }}</h3>
     <div class="form-row"><label for="sleep-enabled">{{ t('启用休眠') }}</label><ToggleSwitch v-model="form.sleep.enabled" input-id="sleep-enabled" :disabled="store.busy" /></div>
@@ -177,6 +152,39 @@ async function removeCookie(platform: string) {
     <label>{{ t('Instagram 缓存有效期（分钟）') }}<input v-model.number="form.pipeline.instagram_source_cache_ttl_minutes" type="number" min="1" step="1" required></label>
     <label>{{ t('Instagram 缓存条数') }}<input v-model.number="form.pipeline.instagram_source_cache_capacity" type="number" min="1" step="1" required></label>
    </div></div>
+*/
+</script>
+<template>
+ <nav class="settings-categories" :aria-label="t('设置分类')">
+  <button v-for="item in categories" :key="item.id" :aria-pressed="category === item.id" :class="{ selected: category === item.id }" @click="category = item.id">{{ t(item.label) }}</button>
+ </nav>
+ <!-- 分类导航已标明内容，卡片不重复显示分类标题。 -->
+ <!-- 通用设置共用保存接口；分类切换不销毁控件或覆盖编辑副本。 -->
+ <p v-if="!form && !['cookies', 'engines', 'storage'].includes(category)" class="empty">{{ t('加载中') }}</p>
+ <form v-if="form" v-show="!['cookies', 'engines', 'storage'].includes(category)" class="settings-form" @submit.prevent="saveSettings">
+  <section v-show="category === 'display'" class="panel settings-panel" :aria-label="t('界面设置')">
+   <UISettingsOptions v-model="form.ui" />
+  </section>
+  <section v-show="category === 'files'" class="panel settings-panel" :aria-label="t('文件与归档设置')">
+   <div class="settings-group"><h3>{{ t("目录规则") }}</h3>
+   <div class="form-grid"><label class="wide">{{ t("默认目录模板") }}<input v-model="form.template" required></label></div>
+   <label class="check"><input v-model="form.use_upload_date" type="checkbox">{{ t("按 UP 主的上传 / 发布时间创建日期目录") }}</label>
+   </div>
+   <div class="settings-group"><h3>{{ t("自动归档") }}</h3>
+   <label class="check"><input v-model="form.auto_archive" type="checkbox" :disabled="!store.archiveMounted">{{ t("新任务默认开启自动归档") }}</label></div>
+  </section>
+  <section v-show="category === 'youtube'" class="panel settings-panel" :aria-label="t('YouTube 默认下载设置')">
+   <YouTubeOptions v-model="form.youtube" />
+  </section>
+  <section v-show="category === 'scheduling'" class="panel settings-panel" :aria-label="t('并发调度设置')">
+   <!-- 队列容量按平台分别统计，下载并发、每日休眠和请求预算分别在平台卡片中编辑。 -->
+   <div class="scheduling-queue">
+    <div class="form-row"><label for="scheduling-queue-capacity">{{ t('待下载队列上限') }}</label><input id="scheduling-queue-capacity" v-model.number="form.pipeline.queue_capacity" type="number" min="1" step="1" required :disabled="store.busy"></div>
+    <small class="help">{{ t('每个平台单独计算，达到上限后暂停生产。') }}</small>
+   </div>
+   <div class="scheduling-platforms">
+    <PlatformScheduling v-for="platform in (['instagram', 'youtube'] as const)" :key="platform" v-model="form" :platform="platform" :disabled="store.busy" />
+   </div>
   </section>
   <section v-show="category === 'debug'" class="panel settings-panel" :aria-label="t('调试设置')">
    <div class="debug-settings">
@@ -230,3 +238,11 @@ async function removeCookie(platform: string) {
   </form>
  </section></div>
 </template>
+
+<style scoped>
+/* 顶部队列参数与平台卡片分开；桌面并列，窄屏顺序展示独立平台。 */
+.scheduling-queue{display:grid;gap:4px;margin-bottom:12px}
+.scheduling-queue .form-row{max-width:360px}
+.scheduling-platforms{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media(max-width:1100px){.scheduling-platforms{grid-template-columns:minmax(0,1fr)}}
+</style>

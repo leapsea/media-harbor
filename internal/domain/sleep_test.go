@@ -5,6 +5,37 @@ import (
 	"time"
 )
 
+// 平台窗口采用各自时区与开关，一个平台的跨午夜休眠不扩散到另一个平台。
+func TestPlatformSleepWindowsAreIndependent(t *testing.T) {
+	s := PlatformSleepSettings{
+		Instagram: SleepSettings{true, "23:00", "07:00", "Asia/Singapore"},
+		YouTube:   SleepSettings{true, "01:00", "02:00", "UTC"},
+	}
+	for _, tc := range []struct {
+		now    string
+		paused string
+		awake  string
+	}{{"2026-10-14T16:30:00Z", "instagram", "youtube"}, {"2026-10-15T01:30:00Z", "youtube", "instagram"}} {
+		now, _ := time.Parse(time.RFC3339, tc.now)
+		if s.Until(tc.paused, now).IsZero() || !s.Until(tc.awake, now).IsZero() || !s.Until("unknown", now).IsZero() {
+			t.Fatal(tc)
+		}
+	}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// 关闭单个平台保持另一个窗口；不提供任一平台字段时不能借用另一平台配置。
+	s.Instagram.Enabled = false
+	now, _ := time.Parse(time.RFC3339, "2026-10-15T01:30:00Z")
+	if s.Until("youtube", now).IsZero() {
+		t.Fatal("关闭Instagram影响了YouTube")
+	}
+	s.Instagram = SleepSettings{}
+	if err := s.Validate(); err == nil {
+		t.Fatal("缺席的平台休眠窗口被接受")
+	}
+}
+
 // TestSleepBoundaries 验证日内、跨午夜、起止边界与配置时区。
 func TestSleepBoundaries(t *testing.T) {
 	// 起点恰好暂停，终点恰好恢复，窗口外返回零值。
@@ -32,7 +63,7 @@ func TestSleepBoundaries(t *testing.T) {
 	}
 }
 
-// TestSleepValidation 禁止全天休眠和非法字段，关闭时兼容旧数据。
+// TestSleepValidation 禁止全天休眠和非法字段；关闭窗口不参与时间判断。
 func TestSleepValidation(t *testing.T) {
 	for _, s := range []SleepSettings{{true, "25:00", "06:00", "UTC"}, {true, "01:00", "01:00", "UTC"}, {true, "01:00", "06:00", "invalid"}, {true, "1:00", "06:00", "UTC"}} {
 		if s.Validate() == nil {

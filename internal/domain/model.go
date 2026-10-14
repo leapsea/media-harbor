@@ -189,16 +189,16 @@ type PipelineSettings struct {
 
 // Settings 中的并发上限只用于下载消费者。
 type Settings struct {
-	YouTubeConcurrent   int              `json:"youtube_concurrent"`
-	InstagramConcurrent int              `json:"instagram_concurrent"`
-	Template            string           `json:"template"`
-	AutoArchive         bool             `json:"auto_archive"`
-	UseUploadDate       bool             `json:"use_upload_date"`
-	YouTube             YouTubeOptions   `json:"youtube"`
-	UI                  UISettings       `json:"ui"`
-	Debug               DebugSettings    `json:"debug"`
-	Pipeline            PipelineSettings `json:"pipeline"`
-	Sleep               SleepSettings    `json:"sleep"`
+	YouTubeConcurrent   int                   `json:"youtube_concurrent"`
+	InstagramConcurrent int                   `json:"instagram_concurrent"`
+	Template            string                `json:"template"`
+	AutoArchive         bool                  `json:"auto_archive"`
+	UseUploadDate       bool                  `json:"use_upload_date"`
+	YouTube             YouTubeOptions        `json:"youtube"`
+	UI                  UISettings            `json:"ui"`
+	Debug               DebugSettings         `json:"debug"`
+	Pipeline            PipelineSettings      `json:"pipeline"`
+	Sleep               PlatformSleepSettings `json:"sleep"`
 }
 
 // ConfigurableEngine 在保存设置后更新共享调度器，不重启任务或复制 Cookie。

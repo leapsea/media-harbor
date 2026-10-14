@@ -126,7 +126,8 @@ func Defaults() domain.Settings {
 	// 旧环境参数仅初始化新字段；之后以系统设置中的持久值为准。
 	settings.Pipeline.Instagram.MinIntervalSeconds = InstagramRequestInterval().Seconds()
 	settings.Pipeline.Instagram.CooldownSeconds = InstagramCooldown().Seconds()
-	settings.Sleep.Timezone = env("TZ", settings.Sleep.Timezone)
+	settings.Sleep.Instagram.Timezone = env("TZ", settings.Sleep.Instagram.Timezone)
+	settings.Sleep.YouTube.Timezone = env("TZ", settings.Sleep.YouTube.Timezone)
 	return settings
 }
 

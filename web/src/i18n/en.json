@@ -291,5 +291,9 @@
   "Instagram 登录需要验证": "Instagram verification required",
   "YouTube 登录 Cookie 已失效": "YouTube login Cookie expired",
   "停用 {time}": "Disabled {time}",
-  "清单待确认": "Manifest pending"
+  "清单待确认": "Manifest pending",
+  "每个平台单独计算，达到上限后暂停生产。": "Counted separately for each platform. Production pauses when the limit is reached.",
+  "仅影响当前平台；当前媒体完成后休眠，结束后自动继续。": "Applies only to this platform. Active media finishes before rest; the queue resumes automatically afterward.",
+  "请求节奏与缓存": "Request pacing and cache",
+  "请求节奏": "Request pacing"
 }

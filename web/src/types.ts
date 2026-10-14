@@ -39,7 +39,8 @@ export interface UISettings { language: string; recent_downloads: number; histor
 /** 每日休眠按配置时区解释，支持跨午夜。 */
 export interface SleepSettings { enabled: boolean; start: string; end: string; timezone: string }
 export interface Settings {
- sleep: SleepSettings
+ /** 每个平台拥有独立休眠窗口，互不继承或影响。 */
+ sleep: Record<'instagram' | 'youtube', SleepSettings>
 	/** 解析请求预算与下载线程数独立，两个平台分别计时。 */
 	pipeline: {
 	 queue_capacity: number

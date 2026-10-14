@@ -14,7 +14,48 @@ type SleepSettings struct {
 	Timezone string `json:"timezone"`
 }
 
-// Validate 拒绝全天休眠和模糊时间；关闭功能不要求旧客户端提供字段。
+// PlatformSleepSettings 为每个平台保存独立窗口，不存在全局休眠或继承规则。
+// 两个平台可以采用不同的开关、时间与时区。
+type PlatformSleepSettings struct {
+	Instagram SleepSettings `json:"instagram"`
+	YouTube   SleepSettings `json:"youtube"`
+}
+
+// For 只返回指定平台的窗口，未知平台不影响已有平台。
+func (s PlatformSleepSettings) For(platform string) SleepSettings {
+	switch platform {
+	case "instagram":
+		return s.Instagram
+	case "youtube":
+		return s.YouTube
+	default:
+		return SleepSettings{}
+	}
+}
+
+// Until 是调度与展示共用的入口，调用方必须明确当前平台。
+func (s PlatformSleepSettings) Until(platform string, now time.Time) time.Time {
+	return s.For(platform).Until(now)
+}
+
+// Validate 要求客户端提交两个完整窗口，关闭时也不能省略配置字段。
+func (s PlatformSleepSettings) Validate() error {
+	for _, platform := range []string{"instagram", "youtube"} {
+		window := s.For(platform)
+		if window.Start == "" || window.End == "" {
+			return fmt.Errorf("%s 休眠时间必须为 HH:mm", platform)
+		}
+		if window.Timezone == "" {
+			return fmt.Errorf("%s 休眠时区不能为空", platform)
+		}
+		if err := window.Validate(); err != nil {
+			return fmt.Errorf("%s 休眠设置：%w", platform, err)
+		}
+	}
+	return nil
+}
+
+// Validate 拒绝启用窗口的全天休眠和模糊时间；字段完整性由平台配置校验。
 func (s SleepSettings) Validate() error {
 	if !s.Enabled {
 		return nil

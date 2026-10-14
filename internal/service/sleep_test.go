@@ -13,13 +13,71 @@ func serviceSleepNow() domain.SleepSettings {
 	return domain.SleepSettings{Enabled: true, Start: now.Add(-time.Hour).Format("15:04"), End: now.Add(time.Hour).Format("15:04"), Timezone: "UTC"}
 }
 
+// 调度、生产暂停与任务状态均按所属平台判断；另一平台完成下载并保持正常展示。
+func TestPlatformSleepDoesNotBlockOtherPlatform(t *testing.T) {
+	for _, paused := range []string{"instagram", "youtube"} {
+		t.Run(paused, func(t *testing.T) {
+			a := testApp(t, fakeEngine{})
+			s, _ := a.Repo.Settings()
+			awake := "youtube"
+			if paused == "instagram" {
+				s.Sleep.Instagram = serviceSleepNow()
+			} else {
+				s.Sleep.YouTube = serviceSleepNow()
+				awake = "instagram"
+			}
+			if err := a.SaveSettings(s); err != nil {
+				t.Fatal(err)
+			}
+			subs := map[string]domain.Subscription{}
+			for _, platform := range []string{paused, awake} {
+				sub := addSub(t, a, platform, platform)
+				subs[platform] = sub
+				if err := a.Repo.AddContentAndTask(sub.ID, domain.Content{RemoteID: "media"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := a.tick(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			a.wg.Wait()
+			for _, platform := range []string{paused, awake} {
+				tasks, _ := a.Repo.SubscriptionTasks(subs[platform].ID)
+				want := "completed"
+				if platform == paused {
+					want = "queued"
+				}
+				if len(tasks) != 1 || tasks[0].Status != want {
+					t.Fatal(platform, tasks)
+				}
+			}
+			groups, err := a.TaskGroups()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, group := range groups {
+				if (group.SleepUntil != nil) != (group.SubscriptionID == subs[paused].ID) {
+					t.Fatal("休眠状态扩散到其他平台", group)
+				}
+			}
+			// 队列背压中的生产者同样不得因其他平台的休眠而等待。
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if err := a.waitProductionAwake(ctx, awake, "media", func(string) {}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 // TestSleepQueuesDueAndManualTasks 周期到期不丢失，两个平台与手动下载都等待。
 func TestSleepQueuesDueAndManualTasks(t *testing.T) {
 	// 使用真实SQLite，检查持久任务ID与API汇总。
 	a := testApp(t, fakeEngine{})
 	s, _ := a.Repo.Settings()
 	// 设置保存后当前进程上下文不能收到取消信号。
-	s.Sleep = serviceSleepNow()
+	s.Sleep.Instagram = serviceSleepNow()
+	s.Sleep.YouTube = serviceSleepNow()
 	if err := a.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +121,8 @@ func TestSleepQueuesDueAndManualTasks(t *testing.T) {
 		}
 	}
 	// 关闭后原任务ID继续认领，未运行的周期不会重新创建另一条扫描。
-	s.Sleep.Enabled = false
+	s.Sleep.Instagram.Enabled = false
+	s.Sleep.YouTube.Enabled = false
 	if err := a.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +159,7 @@ func TestSleepKeepsActiveDownload(t *testing.T) {
 	if err := a.tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	s.Sleep = serviceSleepNow()
+	s.Sleep.Instagram = serviceSleepNow()
 	if err := a.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +182,7 @@ func TestSleepCreationReturnsWithoutRequests(t *testing.T) {
 	eng := &avatarEngine{}
 	a := testApp(t, eng)
 	settings, _ := a.Repo.Settings()
-	settings.Sleep = serviceSleepNow()
+	settings.Sleep.Instagram = serviceSleepNow()
 	if err := a.SaveSettings(settings); err != nil {
 		t.Fatal(err)
 	}

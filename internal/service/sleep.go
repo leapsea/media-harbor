@@ -9,7 +9,7 @@ import (
 
 // waitProductionAwake 在交付确认前暂停生产，当前条目及平台归属仍然保留。
 // 引擎侧还会在每次 HTTP 请求前复核，覆盖分页、重试和头像解析。
-func (a *App) waitProductionAwake(ctx context.Context, media string, log func(string)) error {
+func (a *App) waitProductionAwake(ctx context.Context, platform, media string, log func(string)) error {
 	var lastReport time.Time
 	for {
 		if err := ctx.Err(); err != nil {
@@ -20,7 +20,7 @@ func (a *App) waitProductionAwake(ctx context.Context, media string, log func(st
 		if err != nil {
 			return err
 		}
-		until := settings.Sleep.Until(time.Now())
+		until := settings.Sleep.Until(platform, time.Now())
 		// 继续确认同一条目，防止重启生产造成重复或跳过媒体。
 		if until.IsZero() {
 			if !lastReport.IsZero() {

@@ -203,13 +203,15 @@ func (a *App) waitScanQueue(ctx context.Context, sid int64, item domain.Content,
 	var lastReport time.Time
 	started := time.Now()
 	for {
-		if sub, err := a.Repo.Subscription(sid); err != nil {
+		sub, err := a.Repo.Subscription(sid)
+		if err != nil {
 			return err
-		} else if err := a.Credentials.Check(sub.Platform); err != nil {
+		}
+		if err := a.Credentials.Check(sub.Platform); err != nil {
 			return err
 		}
 		// 历史资产：这里只检查 ctx.Err()，容量释放后直接继续生产。
-		if err := a.waitProductionAwake(ctx, item.RemoteID, log); err != nil {
+		if err := a.waitProductionAwake(ctx, sub.Platform, item.RemoteID, log); err != nil {
 			return err
 		}
 		a.mu.Lock()

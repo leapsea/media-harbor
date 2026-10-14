@@ -1,4 +1,4 @@
-"""正式镜像与真实 SDK：十条范围内验证休眠排队、在途媒体收尾与恢复。"""
+"""正式镜像与真实 SDK：十条范围内验证平台独立休眠、在途媒体收尾与自动恢复。"""
 import importlib.util
 import json
 import os
@@ -49,7 +49,7 @@ def run():
         # 读取实际容器默认设置，避免只验证宿主侧配置。
         settings = api.wait(lambda: api.request('/settings'), bool)
         # 自动恢复不依靠关闭开关，原窗口仍然持久保存。
-        assert settings['sleep'] == dict(enabled=False, start='00:00', end='06:00', timezone='Asia/Singapore'), settings
+        assert settings['sleep'] == {platform: dict(enabled=False, start='00:00', end='06:00', timezone='Asia/Singapore') for platform in ('instagram', 'youtube')}, settings
         settings['debug']['test_item_limit'] = 10
         settings['instagram_concurrent'] = settings['youtube_concurrent'] = 1
         settings['pipeline']['queue_capacity'] = 2
@@ -58,6 +58,7 @@ def run():
         settings['youtube'].update(video=True, format='best', fragments=1, comments=False, metadata=True,
                                   subtitles=False, auto_subtitles=False, thumbnail=False, extra_audio=False, extract_audio=False)
         api.request('/settings', 'PUT', settings)
+        api.request('/cookies/instagram', 'PUT', {'content': 'sessionid=offline-fixture'})
         subs = {}
         for platform, url in (('instagram', 'https://www.instagram.com/author/'), ('youtube', 'https://www.youtube.com/@author')):
             subs[platform] = api.request('/subscriptions', 'POST', {'platform': platform, 'url': url, 'enabled': False})
@@ -65,33 +66,46 @@ def run():
         for sub in subs.values():
             api.wait(lambda: tasks_for(sub), lambda ts: sum(t['content_id'] > 0 and t['status'] == 'running' for t in ts) == 1
                      and sum(t['content_id'] > 0 and t['status'] == 'queued' for t in ts) == 2)
-        # 热更新到当前窗口，运行中的媒体没有被取消，新解析和新下载不能开始。
+        # 仅Instagram热进入休眠；已开始的媒体收尾，YouTube继续生产并下载完其全部条目。
+        now = datetime.now(timezone.utc)
+        settings['sleep']['instagram'] = dict(enabled=True, start=(now-timedelta(hours=1)).strftime('%H:%M'), end=(now+timedelta(hours=1)).strftime('%H:%M'), timezone='UTC')
+        api.request('/settings', 'PUT', settings)
+        baseline = {k:v for k,v in counts().items() if '/instagram/' in k}
+        (RUN / 'data/release-media').touch()
+        api.wait(lambda: tasks_for(subs['instagram']), lambda ts: sum(t['content_id'] > 0 and t['status'] == 'completed' for t in ts) == 1)
+        api.wait(lambda: tasks_for(subs['youtube']), lambda ts: all(t['status'] == 'completed' for t in ts))
+        time.sleep(1)
+        assert {k:v for k,v in counts().items() if '/instagram/' in k} == baseline
+        groups = {g['subscription_id']:g for g in api.request('/task-groups')}
+        assert groups[subs['instagram']['id']].get('sleep_until')
+        assert not groups[subs['youtube']['id']].get('sleep_until')
+        print('PASS Instagram休眠：当前媒体完成、原队列保留；YouTube继续采集并下载全部素材', flush=True)
+        # 休眠平台手动启动仍只排队，不请求头像或帖子。
+        other = api.request('/subscriptions', 'POST', {'platform': 'instagram', 'url': 'https://www.instagram.com/waiting/', 'enabled': False})
+        waiting = api.request(f"/subscriptions/{other['id']}/scan?kind=full", 'POST')
+        assert next(t for t in tasks_for(other) if t['id'] == waiting['id'])['status'] == 'queued'
+        assert {k:v for k,v in counts().items() if '/instagram/' in k} == baseline
+        # 交换休眠平台，两个窗口不复制：Instagram原队列恢复，YouTube新扫描等待自己的窗口。
         now = datetime.now(timezone.utc)
         end = now + timedelta(minutes=1)
         if now.second > 45:
             end += timedelta(minutes=1)
-        settings['sleep'] = dict(enabled=True, start=(now-timedelta(hours=1)).strftime('%H:%M'), end=end.strftime('%H:%M'), timezone='UTC')
+        settings['sleep']['instagram']['enabled'] = False
+        settings['sleep']['youtube'] = dict(enabled=True, start=(now-timedelta(hours=1)).strftime('%H:%M'), end=end.strftime('%H:%M'), timezone='UTC')
         api.request('/settings', 'PUT', settings)
-        # 比较请求计数证明平台无新流量，而不只比较数据库状态。
-        baseline = counts()
-        (RUN / 'data/release-media').touch()
-        for sub in subs.values():
-            api.wait(lambda: tasks_for(sub), lambda ts: sum(t['content_id'] > 0 and t['status'] == 'completed' for t in ts) == 1)
-        # 让调度器经历多个周期，稳定证明消费者完成后没有继续认领。
-        time.sleep(2)
-        assert counts() == baseline, (counts(), baseline)
-        # 汇总应显示休眠，已完成媒体不能再显示传输中。
-        groups = api.request('/task-groups')
-        assert all(g.get('sleep_until') and g['counts']['running'] == 0 for g in groups), groups
-        print('PASS 两个平台当前媒体完成；新请求停止；原队列与休眠恢复时间保留', flush=True)
-        # 休眠期间手动启动只入队，不触发头像或帖子请求。
-        other = api.request('/subscriptions', 'POST', {'platform': 'instagram', 'url': 'https://www.instagram.com/waiting/', 'enabled': False})
-        waiting = api.request(f"/subscriptions/{other['id']}/scan?kind=full", 'POST')
-        assert next(t for t in tasks_for(other) if t['id'] == waiting['id'])['status'] == 'queued'
-        time.sleep(1)
-        assert counts() == baseline
-        # 到点恢复无需保存设置；等待只发生在离线容器，最长约一分钟。
-        print('等待真实分钟边界，验证自动恢复：' + settings['sleep']['end'] + ' UTC', flush=True)
+        (RUN / 'data/fixture-items.json').write_text(json.dumps(['fresh2', 'fresh1']))
+        before_youtube = {k:v for k,v in counts().items() if '/youtube/' in k}
+        queued = api.request(f"/subscriptions/{subs['youtube']['id']}/scan?kind=full", 'POST')
+        for sub in (subs['instagram'], other):
+            api.wait(lambda sub=sub: tasks_for(sub), lambda ts: all(t['status'] == 'completed' for t in ts))
+        assert {k:v for k,v in counts().items() if '/youtube/' in k} == before_youtube
+        assert next(t for t in tasks_for(subs['youtube']) if t['id'] == queued['id'])['status'] == 'queued'
+        groups = {g['subscription_id']:g for g in api.request('/task-groups')}
+        assert groups[subs['youtube']['id']].get('sleep_until')
+        assert not groups[subs['instagram']['id']].get('sleep_until')
+        print('PASS YouTube休眠：新扫描等待；Instagram原生产者和等待配置继续执行', flush=True)
+        # 到点恢复无需再保存设置，检测新媒体请求而非仅检查UI状态。
+        print('等待真实分钟边界，验证YouTube自动恢复：' + settings['sleep']['youtube']['end'] + ' UTC', flush=True)
         deadline = time.monotonic() + 95
         while time.monotonic() < deadline:
             ts = api.request('/tasks')
@@ -100,15 +114,21 @@ def run():
             time.sleep(.2)
         else:
             raise AssertionError(ts)
+        assert {k:v for k,v in counts().items() if '/youtube/' in k} != before_youtube
         assert settings['sleep'] == api.request('/settings')['sleep']
         assert all(t['status'] == 'completed' for t in api.request('/tasks'))
         # 重启保留窗口，新任务在当前已结束的窗口外正常调度。
         subprocess.check_output(['docker', 'restart', NAME])
         api.wait(lambda: api.request('/settings'), lambda s: s['sleep'] == settings['sleep'])
-        report = dict(current_media_completed=True, no_new_requests_during_sleep=True,
+        report = dict(platform_windows_independent=True, youtube_runs_during_instagram_sleep=True, instagram_runs_during_youtube_sleep=True, current_media_completed=True, no_new_requests_during_sleep=True,
                       manual_tasks_queued=True, automatic_resume=True, settings_survive_restart=True, debug_limit=10)
         (RUN / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))
         print('PASS 自动恢复与重启持久化；报告：' + str(RUN / 'report.json'), flush=True)
+        if os.environ.get('SMOKE_UI_HOLD') == '1':
+            print('UI_HOLD ' + str(RUN), flush=True)
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline and not (RUN / 'continue-ui').exists():
+                time.sleep(.2)
     except Exception:
         # 日志仅来自隔离素材容器，不读取真实凭据。
         print(subprocess.check_output(['docker', 'logs', NAME], text=True))

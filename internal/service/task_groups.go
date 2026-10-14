@@ -89,7 +89,7 @@ func (a *App) TaskGroups() ([]TaskGroup, error) {
 			group.Status = "skipped"
 		}
 		// 休眠是调度展示状态，底层队列不改成取消或失败，取消按钮继续可用。
-		if until := settings.Sleep.Until(time.Now()); !until.IsZero() && group.Counts["running"] == 0 && (stat.Queued > 0 || stat.Running > 0) {
+		if until := settings.Sleep.Until(platforms[group.SubscriptionID], time.Now()); !until.IsZero() && group.Counts["running"] == 0 && (stat.Queued > 0 || stat.Running > 0) {
 			group.SleepUntil = &until
 		}
 		state, statusErr := a.Credentials.Status(platforms[group.SubscriptionID])
