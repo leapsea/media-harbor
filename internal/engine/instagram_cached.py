@@ -42,7 +42,7 @@ def install_instagram_source(path):
 
 
 install_instagram_source(sys.argv.pop(1))
-install_instagram_progress()
+# 历史入口调用 install_instagram_progress()；实际字节事件改由 SDK 传输适配报告给 Go。
 import gallery_dl
 # main 返回退出码，必须显式传给父进程，下载失败不能误报为成功。
 sys.exit(gallery_dl.main())

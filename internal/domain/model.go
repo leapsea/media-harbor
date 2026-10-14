@@ -3,6 +3,7 @@ package domain
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -197,6 +198,15 @@ type MediaSource struct {
 type Engine interface {
 	Scan(context.Context, Subscription, int, func(string), func(ScanResult) error) (ScanResult, error)
 	Download(context.Context, Subscription, Content, YouTubeOptions, string, func(string)) error
+}
+
+// ErrScanBoundary 表示增量已遇到扫描开始前的本地索引，属于正常完成。
+var ErrScanBoundary = errors.New("增量扫描已到达本地缓存边界")
+
+// IncrementalScanner 可把本地边界交给平台引擎，在继续分页前结束枚举。
+// 普通 Engine 仍由服务层的逐条回调执行相同的停止规则。
+type IncrementalScanner interface {
+	ScanIncremental(context.Context, Subscription, int, []string, func(string), func(ScanResult) error) (ScanResult, error)
 }
 
 // NameResolver 只读取作者元数据，不创建订阅或下载任务。

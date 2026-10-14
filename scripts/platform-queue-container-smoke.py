@@ -59,6 +59,7 @@ def setup():
         path.write_text(content)
         path.chmod(0o755)
     args = ["docker", "run", "-d", "--rm", "--name", fixture.NAME, "--user", f"{os.getuid()}:{os.getgid()}",
+            "-e", "INSTAGRAM_REQUEST_INTERVAL_SECONDS=0.02", "-e", "INSTAGRAM_429_COOLDOWN_SECONDS=0.04",
             "-p", f"127.0.0.1:{fixture.PORT}:8080", "-e", "PATH=/fixture/bin:/opt/engines/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
     for name in ("data", "downloads", "logs", "archive", "fixture"):
         args += ["-v", f"{fixture.RUN / name}:/{name}"]

@@ -15,7 +15,9 @@ import (
 
 // dryRunScript 使用只读 Cookie、内存缓存与内存响应探测，标准输出只传事件。
 //
-//go:embed dryrun.py
+// 历史 dryrun.py 保留作为旧流程参考，正式运行只嵌入 SDK 适配。
+//
+//go:embed dryrun_sdk.py
 var dryRunScript string
 
 // DryRun 的请求与日志只在内存和管道中流转，永远不调用 Download 或仓储写接口。
@@ -30,6 +32,14 @@ func (c CLI) DryRun(ctx context.Context, sub domain.Subscription, options domain
 	}
 	cmd := exec.CommandContext(ctx, "python3", "-B", "-u", "-c", script)
 	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+	if sub.Platform == "instagram" {
+		env, end, err := c.instagramController().begin(ctx, "dryrun", log)
+		if err != nil {
+			return err
+		}
+		defer end()
+		cmd.Env = append(cmd.Env, env...)
+	}
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -60,11 +70,13 @@ func (c CLI) DryRun(ctx context.Context, sub domain.Subscription, options domain
 	}
 	decoder := json.NewDecoder(output)
 	var failure error
+	count := 0
 	// 事件管道形成背压：收到条目后先完成字幕策略，再允许请求探测继续。
 	// 元数据包含临时签名地址，只用于当前处理，不写入日志或磁盘。
 	for decoder.More() {
 		var event struct {
 			Kind     string          `json:"kind"`
+			Role     string          `json:"role"`
 			Message  string          `json:"message"`
 			Metadata json.RawMessage `json:"metadata"`
 		}
@@ -75,9 +87,24 @@ func (c CLI) DryRun(ctx context.Context, sub domain.Subscription, options domain
 		}
 		switch event.Kind {
 		case "item":
-			// 试运行不读取已下载产物，验证当前配置应当请求的字幕语言。
-			languages := (ArtifactInventory{}).missingSubtitles(options, event.Metadata)
-			if err := encoder.Encode(map[string]string{"subtitle_languages": languages}); err != nil {
+			// Go 选择要验证的媒体与字幕，并控制清单递归及错误语义。
+			if event.Role != "avatar" {
+				count++
+			}
+			probes, err := dryRunProbes(event.Metadata, sub.Platform, options, log)
+			if err == nil {
+				for _, probe := range probes {
+					if err = probeDryResponse(encoder, decoder, probe, 0, log); err != nil {
+						break
+					}
+				}
+			}
+			if err != nil {
+				failure = err
+				cancel()
+				break
+			}
+			if err = encoder.Encode(map[string]string{"kind": "next"}); err != nil {
 				failure = err
 				cancel()
 			}
@@ -97,6 +124,10 @@ func (c CLI) DryRun(ctx context.Context, sub domain.Subscription, options domain
 	if waitErr != nil {
 		return fmt.Errorf("dryrun 执行失败：%w", waitErr)
 	}
+	if count == 0 {
+		return fmt.Errorf("平台未返回可验证的媒体")
+	}
+	log(fmt.Sprintf("扫描阶段：发现 %d；新增 0；重复 0；未创建任务", count))
 	if sub.Platform == "youtube" && (options.Video || options.ExtraAudio || options.ExtractAudio) {
 		// 只验证后处理工具可启动，合并和提取要求文件，不能放入只读 dryrun。
 		if _, err := run(ctx, "ffmpeg", []string{"-version"}, func(string) {}, false); err != nil {

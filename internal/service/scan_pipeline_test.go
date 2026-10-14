@@ -51,7 +51,7 @@ func TestScanProducerBackpressure(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := a.streamScan(ctx, sub, 0, false, func(string) {}, func(batch domain.ScanResult) error {
+		_, err := a.streamScan(ctx, sub, 0, "full", func(string) {}, func(batch domain.ScanResult) error {
 			for _, c := range batch.Items {
 				if err := a.Repo.AddContentAndTask(sub.ID, c); err != nil {
 					return err

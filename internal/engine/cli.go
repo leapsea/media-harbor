@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"media-harbor/internal/config"
 	"media-harbor/internal/domain"
@@ -21,18 +22,35 @@ type CLI struct {
 	DataDir    string
 	PaidPolicy domain.PaidVideoPolicy
 	instagram  *instagramSourceCache
+	requests   *instagramRequests
 }
 
 // NewCLI 将媒体快照限定在当前引擎实例，不跨账号或写入持久数据库。
 func NewCLI(dataDir string, policy domain.PaidVideoPolicy) CLI {
-	return CLI{DataDir: dataDir, PaidPolicy: policy, instagram: newInstagramSourceCache()}
+	return CLI{DataDir: dataDir, PaidPolicy: policy, instagram: newInstagramSourceCache(), requests: newInstagramRequests()}
+}
+
+// instagramController 在服务实例中共享；字面量 CLI 仍可用于独立工具及测试。
+func (c CLI) instagramController() *instagramRequests {
+	if c.requests != nil {
+		return c.requests
+	}
+	return newInstagramRequests()
 }
 
 // run 使用 Context 使任务取消和服务停止能终止下载进程。
 // stdout 只在 JSON 扫描时收集，下载输出流式写入日志。
 // stderr 始终保留，供用户排查认证或格式错误。
 func run(ctx context.Context, name string, args []string, log func(string), capture bool) ([]byte, error) {
+	return runWithEnv(ctx, name, args, log, capture, nil)
+}
+
+// runWithEnv 只为 SDK 控制通道附加本次会话变量，不修改宿主机环境。
+func runWithEnv(ctx context.Context, name string, args []string, log func(string), capture bool, env []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	// 两个输出流共享进度节流，错误和阶段信息不受限制。
 	output := &commandLog{log: log, now: time.Now}
 	stderr := &logWriter{output: output}
@@ -91,6 +109,47 @@ func (c CLI) common(s domain.Subscription) []string {
 // 非零退出码仍允许返回已解析的部分结果。
 // 服务层同时持久化发现内容并标记扫描失败。
 func (c CLI) Scan(ctx context.Context, s domain.Subscription, itemLimit int, log func(string), emit func(domain.ScanResult) error) (domain.ScanResult, error) {
+	return c.scan(ctx, s, itemLimit, nil, log, emit)
+}
+
+// ScanIncremental 把 YouTube 本地索引交给引擎，在列表项匹配时停止后续分页。
+// 临时 archive 只作为本次扫描的只读快照，不代替数据库或记录新下载。
+func (c CLI) ScanIncremental(ctx context.Context, s domain.Subscription, itemLimit int, known []string, log func(string), emit func(domain.ScanResult) error) (domain.ScanResult, error) {
+	if s.Platform != "youtube" {
+		return c.Scan(ctx, s, itemLimit, log, emit)
+	}
+	args := []string{"--lazy-playlist"}
+	if len(known) > 0 {
+		archive, err := os.CreateTemp("", "media-harbor-incremental-*.txt")
+		if err != nil {
+			return domain.ScanResult{}, err
+		}
+		defer os.Remove(archive.Name())
+		// archive 中的身份与 yt-dlp 的 YouTube 提取器约定一致。
+		for _, id := range known {
+			if _, err = fmt.Fprintln(archive, "youtube "+id); err != nil {
+				archive.Close()
+				return domain.ScanResult{}, err
+			}
+		}
+		if err = archive.Close(); err != nil {
+			return domain.ScanResult{}, err
+		}
+		args = append(args, "--download-archive", archive.Name(), "--break-on-existing")
+	}
+	result, err := c.scan(ctx, s, itemLimit, args, log, emit)
+	// dump-json 默认静默，不能依赖英文日志识别结束原因。
+	// 忽略用户配置且唯一主动停止参数为 break-on-existing，101 即缓存边界。
+	var exit *exec.ExitError
+	if len(known) > 0 && errors.As(err, &exit) && exit.ExitCode() == 101 && ctx.Err() == nil {
+		log("增量扫描命中本地缓存；YouTube 引擎停止后续历史检查与分页")
+		return result, nil
+	}
+	return result, err
+}
+
+// scan 保留普通全量枚举入口，仅由增量追加平台停止参数。
+func (c CLI) scan(ctx context.Context, s domain.Subscription, itemLimit int, extra []string, log func(string), emit func(domain.ScanResult) error) (domain.ScanResult, error) {
 	if s.Platform == "instagram" && c.instagram != nil {
 		deliver := emit
 		emit = func(batch domain.ScanResult) error {
@@ -100,6 +159,7 @@ func (c CLI) Scan(ctx context.Context, s domain.Subscription, itemLimit int, log
 		}
 	}
 	args := c.common(s)
+	args = append(args, extra...)
 	name := "yt-dlp"
 	if s.Platform == "youtube" {
 		if domain.TaskMode(s.Platform, s.URL) == "content" {
@@ -120,7 +180,17 @@ func (c CLI) Scan(ctx context.Context, s domain.Subscription, itemLimit int, log
 		args = append([]string{"-u", "-c", instagramScript(instagramStream)}, args...)
 		name = "python3"
 	}
-	return scanStream(ctx, name, args, s, log, emit)
+	var env []string
+	if s.Platform == "instagram" {
+		var end func()
+		var err error
+		env, end, err = c.instagramController().begin(ctx, "scan", log)
+		if err != nil {
+			return domain.ScanResult{}, err
+		}
+		defer end()
+	}
+	return scanStream(ctx, name, args, s, log, emit, env)
 }
 
 // youtubeEntry 同时支持频道、播放列表和单视频元数据。

@@ -1,8 +1,11 @@
 # gallery-dl 的递归 DataJob 默认缓存全部结果；此适配器逐条输出并保留提取错误。
 import json
+import os
 import sys
 import gallery_dl
-from gallery_dl import job
+from gallery_dl import exception, job
+
+acknowledge = os.environ.get("MEDIA_HARBOR_STREAM_ACK") == "1"
 
 
 class DiscardList:
@@ -21,6 +24,9 @@ class StreamingJob(job.DataJob):
 
     def emit(self, message):
         print(json.dumps(message, default=str), flush=True)
+        # 先让服务确认当前媒体；遇到缓存或取消时不再请求下一条历史。
+        if acknowledge and sys.stdin.readline() != "continue\n":
+            raise exception.StopExtraction()
 
     def media_filter(self, metadata):
         # DataJob 默认移除内部字段；媒体复用必须保留原下载器的请求头和视频清单。

@@ -44,7 +44,14 @@ func (c CLI) UpdateAvatar(ctx context.Context, sub domain.Subscription, path str
 	args := append(c.common(sub), "--directory", dir, "--filename", "avatar.{extension}", "--range", "1",
 		"-o", "extractor.instagram.avatar.archive=null", "-o", "extractor.instagram.avatar.postprocessors=[]",
 		"--", "https://www.instagram.com/"+url.PathEscape(sub.CurrentName)+"/avatar/")
-	if _, err = run(ctx, "gallery-dl", args, log, false); err != nil {
+	env, end, err := c.instagramController().begin(ctx, "avatar", log)
+	if err != nil {
+		return err
+	}
+	defer end()
+	script := instagramScript("import sys,gallery_dl\nsys.exit(gallery_dl.main())\n")
+	args = append([]string{"-u", "-c", script}, args...)
+	if _, err = runWithEnv(ctx, "python3", args, log, false, env); err != nil {
 		return fmt.Errorf("下载博主 %s 头像失败：%w", sub.CurrentName, err)
 	}
 	files, err := os.ReadDir(dir)

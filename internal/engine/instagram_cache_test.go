@@ -20,13 +20,17 @@ import (
 
 // instagramFixture 保留真实 gallery-dl 与 HTTP 下载器，只用本地服务器代替远端。
 // python 包未安装时明确跳过，容器验证必须额外覆盖这条实际执行路径。
-func instagramFixture(t *testing.T, expire bool, status int) (CLI, string, *atomic.Int32, *atomic.Int32) {
+func instagramFixture(t *testing.T, expire bool, status int, bodies ...[]byte) (CLI, string, *atomic.Int32, *atomic.Int32) {
 	t.Helper()
 	python, err := exec.LookPath("python3")
 	if err != nil || exec.Command(python, "-c", "import gallery_dl").Run() != nil {
 		t.Skip("未安装 gallery-dl")
 	}
 	var metadata, media atomic.Int32
+	body := []byte("GIF89a" + strings.Repeat("x", 1024))
+	if len(bodies) > 0 {
+		body = bodies[0]
+	}
 	// 帖子请求与媒体请求分别统计，能够检测隐藏的重复解析。
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/metadata" {
@@ -54,7 +58,8 @@ func instagramFixture(t *testing.T, expire bool, status int) (CLI, string, *atom
 			return
 		}
 		w.Header().Set("Content-Type", "image/gif")
-		_, _ = w.Write([]byte("GIF89a" + strings.Repeat("x", 1024)))
+		w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+		_, _ = w.Write(body)
 	}))
 	t.Cleanup(server.Close)
 	root := t.TempDir()

@@ -22,7 +22,8 @@ done
 if [ "$AVATAR_FAILURE" = 1 ]; then exit 1; fi
 printf '%s' "$AVATAR_BODY" > "$destination/avatar.jpg"
 `
-	if err := os.WriteFile(filepath.Join(root, "gallery-dl"), []byte(command), 0755); err != nil {
+	// 正式入口使用 Python SDK 适配，替身只负责产生头像文件。
+	if err := os.WriteFile(filepath.Join(root, "python3"), []byte(command), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))

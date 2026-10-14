@@ -36,7 +36,9 @@ func (c CLI) instagramPageName(ctx context.Context, address string) (string, err
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.Header.Set("Sec-Fetch-User", "?1")
 	req.Header.Set("Upgrade-Insecure-Requests", "1")
-	response, err := http.DefaultClient.Do(req)
+	// 每次重定向也经过共享许可，仍沿用 Go 原有的公开网页传输实现。
+	client := &http.Client{Transport: instagramRoundTripper{c.instagramController()}}
+	response, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("读取 Instagram 帖子网页失败：%w", err)
 	}

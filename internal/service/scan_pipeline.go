@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"media-harbor/internal/config"
 	"media-harbor/internal/domain"
@@ -12,18 +13,48 @@ import (
 
 // streamScan 用有界通道隔离解析与持久入队，满时 emit 阻塞而不是继续积压。
 // 每次只传一个媒体；取消会同时唤醒通道写入及下载队列等待。
-func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int, catchup bool, log func(string), consume func(domain.ScanResult) error) (domain.ScanResult, error) {
+func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int, kind string, log func(string), consume func(domain.ScanResult) error) (domain.ScanResult, error) {
+	parent := ctx
+	// 子上下文仅控制本次枚举，正常缓存边界不会取消随后继续下载的新项。
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// 固定扫描开始前的索引，新入队条目及轮播重复不能成为本轮停止边界。
+	known := map[string]bool{}
+	var knownIDs []string
+	if kind == "scan" {
+		// 只读一次本地索引；全量和补全没有早停快照。
+		items, err := a.Repo.Contents()
+		if err != nil {
+			return domain.ScanResult{}, err
+		}
+		for _, item := range items {
+			// 其他博主的索引不能截断当前博主的扫描。
+			if item.SubscriptionID == sub.ID {
+				known[item.RemoteID] = true
+				knownIDs = append(knownIDs, item.RemoteID)
+			}
+		}
+	}
 	queue := make(chan domain.ScanResult, config.ScanQueueCapacity)
+	// 引擎结束和入队结束独立等待，先排空已发现的新内容。
 	type outcome struct {
 		result domain.ScanResult
 		err    error
 	}
 	done := make(chan outcome, 1)
 	go func() {
+		var result domain.ScanResult
+		var err error
+		defer func() {
+			// 引擎异常仍解除消费者等待，不遗留关闭不了的扫描通道。
+			if value := recover(); value != nil {
+				err = fmt.Errorf("扫描引擎异常：%v", value)
+			}
+			close(queue)
+			done <- outcome{result, err}
+		}()
 		emitted := 0
-		result, err := a.Engine.Scan(ctx, sub, limit, log, func(batch domain.ScanResult) error {
+		deliver := func(batch domain.ScanResult) error {
 			send := func(v domain.ScanResult) error {
 				select {
 				case queue <- v:
@@ -33,10 +64,17 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 				}
 			}
 			if len(batch.Items) == 0 {
+				// 作者身份等非媒体消息仍需交付，但不会触发增量边界。
 				return send(batch)
 			}
 			for _, item := range batch.Items {
+				// 在生产者回调处停止，不能等缓冲通道消费后才取消历史请求。
+				if known[item.RemoteID] {
+					log(fmt.Sprintf("增量扫描命中本地缓存；媒体 %s；停止后续历史检查与分页", item.RemoteID))
+					return domain.ErrScanBoundary
+				}
 				if limit > 0 && emitted >= limit {
+					// 调试条目限制同时约束入队数量，保持各模式范围一致。
 					break
 				}
 				if err := send(domain.ScanResult{StableID: batch.StableID, CurrentName: batch.CurrentName, Items: []domain.Content{item}}); err != nil {
@@ -45,28 +83,42 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 				emitted++
 			}
 			return nil
-		})
-		close(queue)
-		done <- outcome{result, err}
+		}
+		if scanner, ok := a.Engine.(domain.IncrementalScanner); ok && kind == "scan" {
+			// 平台可在输出媒体前匹配缓存，避免预读更旧的列表页。
+			result, err = scanner.ScanIncremental(ctx, sub, limit, knownIDs, log, deliver)
+		} else {
+			// 历史路径所有扫描直接调用 Engine.Scan，现保留给全量、补全及兼容引擎。
+			result, err = a.Engine.Scan(ctx, sub, limit, log, deliver)
+		}
 	}()
 	var consumeErr error
 	for batch := range queue {
 		if consumeErr != nil {
+			// 排空通道以便生产者退出，保留首次入队失败作为最终原因。
 			continue
 		}
 		if len(batch.Items) > 0 {
-			consumeErr = a.waitScanQueue(ctx, sub.ID, batch.Items[0], catchup, log)
+			consumeErr = a.waitScanQueue(ctx, sub.ID, batch.Items[0], kind == "catchup", log)
 		}
 		if consumeErr == nil {
 			consumeErr = consume(batch)
 		}
 		if consumeErr != nil {
+			// 持久化失败时也立即终止平台解析，不能继续丢弃历史响应。
 			cancel()
 		}
 	}
 	result := <-done
 	if consumeErr != nil {
 		return result.result, consumeErr
+	}
+	if parent.Err() != nil {
+		return result.result, parent.Err()
+	}
+	// 只归一化主动到达缓存边界；用户取消、平台和入队错误仍按失败返回。
+	if errors.Is(result.err, domain.ErrScanBoundary) {
+		return result.result, nil
 	}
 	return result.result, result.err
 }
@@ -84,6 +136,7 @@ func (a *App) waitScanQueue(ctx context.Context, sid int64, item domain.Content,
 			return err
 		}
 		a.mu.Lock()
+		// 下载队列和设置取同一调度视图，容量判断不持锁等待。
 		items, err := a.Repo.Contents()
 		tasks, taskErr := a.Repo.Tasks()
 		settings, settingsErr := a.Repo.Settings()
@@ -93,6 +146,7 @@ func (a *App) waitScanQueue(ctx context.Context, sid int64, item domain.Content,
 			platforms[sub.ID] = sub.Platform
 		}
 		physicalActive := []string{}
+		// 取消中的引擎可能仍在退出，诊断区分持久状态和实际进程。
 		for _, task := range tasks {
 			if task.ContentID != 0 && a.active[task.ID] != nil && platforms[task.SubscriptionID] == platforms[sid] {
 				physicalActive = append(physicalActive, fmt.Sprintf("#%d(配置 #%d，%s)", task.ID, task.SubscriptionID, task.Status))
@@ -117,6 +171,7 @@ func (a *App) waitScanQueue(ctx context.Context, sid int64, item domain.Content,
 				continue
 			}
 			if known.Status == "queued" || known.Status == "running" {
+				// 已被消费者持有的重复项不新增任务，不占额外容量。
 				return nil
 			}
 			if known.Status == "completed" {
@@ -136,6 +191,7 @@ func (a *App) waitScanQueue(ctx context.Context, sid int64, item domain.Content,
 					options = *sub.YouTube
 				}
 				if !engine.NeedsSupplement(sub.Platform, known, options) {
+					// 只有补全读取已有产物；增量早停在上层生产回调完成。
 					return nil
 				}
 			}
@@ -166,6 +222,7 @@ func (a *App) waitScanQueue(ctx context.Context, sid int64, item domain.Content,
 			}
 		}
 		pending := queued + running
+		// 全部积压只用于日志解释，调试范围外任务不能形成背压。
 		allPending := 0
 		for _, task := range tasks {
 			if task.SubscriptionID == sid && task.ContentID != 0 && (task.Status == "queued" || task.Status == "running") {
@@ -173,6 +230,7 @@ func (a *App) waitScanQueue(ctx context.Context, sid int64, item domain.Content,
 			}
 		}
 		if pending < config.ScanQueueCapacity {
+			// 容量可用时立即返回，让当前媒体持久入队。
 			if waiting {
 				log(fmt.Sprintf("下载队列已释放容量，继续解析入队；等待 %s；当前容量 %d/%d", time.Since(started).Round(time.Second), pending, config.ScanQueueCapacity))
 			}

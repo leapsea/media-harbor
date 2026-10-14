@@ -99,7 +99,15 @@ func (c CLI) ResolveAuthor(ctx context.Context, s domain.Subscription) (domain.S
 		return domain.ScanResult{CurrentName: name}, nil
 	}
 	args := append(c.common(s), "--dump-json", "--range", "1", "--", "https://www.instagram.com/"+url.PathEscape(name)+"/avatar/")
-	raw, err := run(ctx, "gallery-dl", args, func(string) {}, true)
+	env, end, err := c.instagramController().begin(ctx, "author", func(string) {})
+	if err != nil {
+		return domain.ScanResult{}, err
+	}
+	defer end()
+	// 头像作者解析也走统一请求许可，不能绕过当前平台冷却。
+	script := instagramScript("import sys,gallery_dl\nsys.exit(gallery_dl.main())\n")
+	args = append([]string{"-u", "-c", script}, args...)
+	raw, err := runWithEnv(ctx, "python3", args, func(string) {}, true, env)
 	if err != nil {
 		return domain.ScanResult{}, fmt.Errorf("解析头像作者失败：%w", err)
 	}

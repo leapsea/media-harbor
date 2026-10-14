@@ -2,9 +2,18 @@
 import json
 import re
 import time
+import os
 
 
 def instagram_web_post(page, shortcode):
+    # 网页模型解析已经由 Go 接管；SDK 适配只交换原始页面和解析结果。
+    if os.environ.get("MEDIA_HARBOR_CONTROL"):
+        return control({"Kind": "web-post", "Page": page, "Shortcode": shortcode})
+    return legacy_instagram_web_post(page, shortcode)
+
+
+def legacy_instagram_web_post(page, shortcode):
+    # 历史实现仅供无控制通道的独立 SDK 适配测试参考，正式入口均调用 Go。
     # 只读取当前短码的完整媒体对象，排除路由参数、登录者与推荐帖子。
     def find(value):
         if isinstance(value, dict):

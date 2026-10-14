@@ -134,7 +134,8 @@ func (a *App) SaveSubscription(s *domain.Subscription) error {
 	return nil
 }
 
-// QueueScan 全量和增量共用平台枚举，唯一内容 ID 决定新增下载。
+// QueueScan 增量在已有索引处停止，全量和补全继续遍历平台可获取内容。
+// 历史逻辑：全量和增量共用平台枚举，仅以唯一内容 ID 决定新增下载。
 // 手动扫描不要求定时开关启用。
 // 同一订阅只能有一个未结束的扫描记录。
 func (a *App) QueueScan(id int64, kind string) (domain.Task, error) {
@@ -584,6 +585,8 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 	if t.ContentID == 0 {
 		if t.Kind == "catchup" {
 			log("补全下载：复用已有媒体文件，补齐缺项并刷新元数据与所选评论")
+		} else if t.Kind == "scan" {
+			log("增量扫描：从最新内容开始，遇到本地已有媒体即结束；历史缺失项请使用补全下载")
 		}
 		// 等待期间定期报告耗时，不输出 Cookie 或引擎 JSON 原文。
 		progressDone, progressStopped := make(chan struct{}), make(chan struct{})
@@ -663,7 +666,7 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 			}
 			return nil
 		}
-		result, scanErr := a.streamScan(ctx, s, settings.Debug.TestItemLimit, t.Kind == "catchup", scanLog, consume)
+		result, scanErr := a.streamScan(ctx, s, settings.Debug.TestItemLimit, t.Kind, scanLog, consume)
 		close(progressDone)
 		<-progressStopped
 		log(fmt.Sprintf("账号识别：稳定 ID=%s；当前名称=%s", result.StableID, result.CurrentName))

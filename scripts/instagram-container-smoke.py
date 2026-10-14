@@ -57,7 +57,7 @@ class Fixture(Extractor):
             code='avatar'
             nums=[1]
         else:
-            with urllib.request.urlopen('http://127.0.0.1:8001/metadata/'+code) as f: nums=json.load(f)
+            nums=self.request_json('http://127.0.0.1:8001/metadata/'+code)
         for num in nums:
             data={'post_id':code,'num':num,'extension':'gif','post_url':'https://www.instagram.com/p/'+code+'/',
                   'owner_id':code,'username':code,'description':'Offline '+code,
@@ -105,6 +105,7 @@ def run():
     # 限流素材只验证退出状态和请求数，不实际等待引擎默认的一分钟。
     (RUN / "data/gallery-dl.json").write_text(json.dumps({"downloader": {"http": {"retries": 0, "sleep-429": 0}}}))
     args = ["docker", "run", "-d", "--rm", "--name", NAME, "--user", f"{os.getuid()}:{os.getgid()}",
+            "-e", "INSTAGRAM_REQUEST_INTERVAL_SECONDS=0.02", "-e", "INSTAGRAM_429_COOLDOWN_SECONDS=0.04",
             "-p", f"127.0.0.1:{PORT}:8080", "-e", "PATH=/fixture/bin:/opt/engines/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
     for name in ("data", "downloads", "logs", "archive", "fixture"):
         args += ["-v", f"{RUN / name}:/{name}"]

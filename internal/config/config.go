@@ -23,6 +23,24 @@ const InstagramSourceCacheTTL = 15 * time.Minute
 // InstagramMediaAttempts 只在媒体地址明确失效时重新解析，不放大 429 请求。
 const InstagramMediaAttempts = 2
 
+// InstagramRequestInterval 是所有 SDK 进程共享的最小请求间隔。
+func InstagramRequestInterval() time.Duration {
+	return seconds("INSTAGRAM_REQUEST_INTERVAL_SECONDS", 6*time.Second)
+}
+
+// InstagramCooldown 在未提供 Retry-After 时决定平台统一冷却时长。
+func InstagramCooldown() time.Duration {
+	return seconds("INSTAGRAM_429_COOLDOWN_SECONDS", time.Minute)
+}
+
+// seconds 允许隔离验收缩短等待，负数及非法值仍采用运行默认值。
+func seconds(key string, fallback time.Duration) time.Duration {
+	if value, err := strconv.ParseFloat(os.Getenv(key), 64); err == nil && value >= 0 {
+		return time.Duration(value * float64(time.Second))
+	}
+	return fallback
+}
+
 // YouTubeMediaAttempts 在媒体地址被拒绝后重新解析一次，不反复重试同一个签名地址。
 const YouTubeMediaAttempts = 2
 
