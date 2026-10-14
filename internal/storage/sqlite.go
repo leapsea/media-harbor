@@ -77,6 +77,10 @@ func Open(path string, defaults domain.Settings) (*Store, error) {
 		db.Close()
 		return nil, e
 	}
+	if e = s.migratePosts(); e != nil {
+		db.Close()
+		return nil, e
+	}
 	tasks, e := s.Tasks()
 	if e != nil {
 		return nil, e
@@ -116,6 +120,10 @@ const schema = `
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS subscriptions(id INTEGER PRIMARY KEY,platform TEXT NOT NULL,identity TEXT NOT NULL,payload TEXT NOT NULL,UNIQUE(platform,identity));
 CREATE TABLE IF NOT EXISTS content_items(id INTEGER PRIMARY KEY,subscription_id INTEGER NOT NULL,remote_id TEXT NOT NULL,payload TEXT NOT NULL,UNIQUE(subscription_id,remote_id));
+CREATE TABLE IF NOT EXISTS task_model_migrations(name TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS post_tasks(id INTEGER PRIMARY KEY,subscription_id INTEGER NOT NULL,remote_id TEXT NOT NULL,payload TEXT NOT NULL,UNIQUE(subscription_id,remote_id));
+CREATE TABLE IF NOT EXISTS download_items(id INTEGER PRIMARY KEY,post_id INTEGER NOT NULL,content_id INTEGER NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL,UNIQUE(post_id,content_id,kind));
+CREATE INDEX IF NOT EXISTS download_items_content ON download_items(content_id);
 CREATE TABLE IF NOT EXISTS download_history_cleared(content_id INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY,subscription_id INTEGER NOT NULL,content_id INTEGER NOT NULL,kind TEXT NOT NULL,status TEXT NOT NULL,payload TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS tasks_status ON tasks(status,id);
@@ -275,7 +283,7 @@ func (s *Store) DeleteSubscription(id int64) error {
 		return e
 	}
 	defer tx.Rollback()
-	for _, q := range []string{"DELETE FROM download_history_cleared WHERE content_id IN (SELECT id FROM content_items WHERE subscription_id=?)", "DELETE FROM tasks WHERE subscription_id=?", "DELETE FROM content_items WHERE subscription_id=?", "DELETE FROM subscriptions WHERE id=?"} {
+	for _, q := range []string{"DELETE FROM download_history_cleared WHERE content_id IN (SELECT id FROM content_items WHERE subscription_id=?)", "DELETE FROM download_items WHERE post_id IN (SELECT id FROM post_tasks WHERE subscription_id=?)", "DELETE FROM post_tasks WHERE subscription_id=?", "DELETE FROM tasks WHERE subscription_id=?", "DELETE FROM content_items WHERE subscription_id=?", "DELETE FROM subscriptions WHERE id=?"} {
 		if _, e = tx.Exec(q, id); e != nil {
 			return e
 		}
@@ -285,23 +293,50 @@ func (s *Store) DeleteSubscription(id int64) error {
 
 // SaveContent 更新文件位置和下载状态；内容创建由事务接口完成。
 func (s *Store) SaveContent(v *domain.Content) error {
+	tx, e := s.db.Begin()
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
 	b, e := json.Marshal(v)
 	if e != nil {
 		return e
 	}
-	_, e = s.db.Exec("UPDATE content_items SET payload=? WHERE id=?", b, v.ID)
-	return e
+	if _, e = tx.Exec("UPDATE content_items SET payload=? WHERE id=?", b, v.ID); e != nil {
+		return e
+	}
+	if e = s.syncResources(tx, v.ID, v.Status, nil, v.Paths, v.Error); e != nil {
+		return e
+	}
+	return tx.Commit()
 }
 
-// SaveTask 保持状态索引与 JSON 快照一致。
+// SaveTask 在同一事务内更新执行状态、C 层资源和 B 层完成聚合。
 func (s *Store) SaveTask(v *domain.Task) error {
+	tx, e := s.db.Begin()
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
 	b, e := json.Marshal(v)
 	if e != nil {
 		return e
 	}
-	_, e = s.db.Exec("UPDATE tasks SET status=?,payload=? WHERE id=?", v.Status, b, v.ID)
-	return e
+	if _, e = tx.Exec("UPDATE tasks SET status=?,payload=? WHERE id=?", v.Status, b, v.ID); e != nil {
+		return e
+	}
+	if v.ContentID != 0 {
+		if e = s.syncResources(tx, v.ContentID, v.Status, v.Progress, nil, v.Error); e != nil {
+			return e
+		}
+	}
+	return tx.Commit()
 }
+
+/* 历史资产：SaveContent/SaveTask 仅更新 payload 和 tasks.status，未同步帖子及子资源状态。
+_, e = s.db.Exec("UPDATE content_items SET payload=? WHERE id=?", b, v.ID)
+_, e = s.db.Exec("UPDATE tasks SET status=?,payload=? WHERE id=?", v.Status, b, v.ID)
+*/
 
 // insertTask 在调用者的事务中写入，扫描记录和下载任务同时提交。
 // 活动任务唯一索引约束 queued 和 running，历史尝试仍保留。
@@ -378,6 +413,9 @@ func (s *Store) AddContentAndTask(sid int64, v domain.Content) error {
 	t := domain.Task{SubscriptionID: sid, ContentID: v.ID, Kind: "download", Status: "queued", CreatedAt: time.Now()}
 	t.QueuedAt, t.SourceTaskID = t.CreatedAt, v.SourceTaskID
 	if e = insertTask(tx, &t); e != nil {
+		return e
+	}
+	if e = s.attachContent(tx, &v); e != nil {
 		return e
 	}
 	return tx.Commit()

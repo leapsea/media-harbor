@@ -77,6 +77,8 @@ func Handler(app *service.App) http.Handler {
 		n, e := app.GroupAction(id(r), "retry")
 		reply(w, map[string]int{"count": n}, e)
 	})
+	mux.HandleFunc("GET /api/subscriptions/{id}/posts", func(w http.ResponseWriter, r *http.Request) { v, e := app.Repo.Posts(id(r)); reply(w, v, e) })
+	mux.HandleFunc("GET /api/posts/{id}/downloads", func(w http.ResponseWriter, r *http.Request) { v, e := app.Repo.DownloadItems(id(r)); reply(w, v, e) })
 	mux.HandleFunc("GET /api/tasks", func(w http.ResponseWriter, r *http.Request) { v, e := app.Repo.Tasks(); reply(w, v, e) })
 	mux.HandleFunc("POST /api/tasks/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, map[string]bool{"ok": true}, app.CancelTask(id(r)))

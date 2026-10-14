@@ -27,18 +27,22 @@ WHERE id IN (SELECT content_id FROM tasks WHERE subscription_id=? AND status IN 
 	}
 	rows, err := tx.Query(`UPDATE tasks SET status='cancelled',
 payload=json_set(payload,'$.status','cancelled','$.finished_at',?)
-WHERE subscription_id=? AND status IN ('queued','running') RETURNING id`, time.Now().Format(time.RFC3339Nano), id)
+WHERE subscription_id=? AND status IN ('queued','running') RETURNING id,content_id`, time.Now().Format(time.RFC3339Nano), id)
 	if err != nil {
 		return nil, err
 	}
 	ids := []int64{}
+	contents := map[int64]bool{}
 	// RETURNING 只传递受影响的主键，无需解码整个历史任务快照。
 	for rows.Next() {
-		var taskID int64
-		if err = rows.Scan(&taskID); err != nil {
+		var taskID, cid int64
+		if err = rows.Scan(&taskID, &cid); err != nil {
 			break
 		}
 		ids = append(ids, taskID)
+		if cid != 0 {
+			contents[cid] = true
+		}
 	}
 	if err == nil {
 		err = rows.Err()
@@ -49,6 +53,12 @@ WHERE subscription_id=? AND status IN ('queued','running') RETURNING id`, time.N
 	}
 	if closeErr != nil {
 		return nil, closeErr
+	}
+	// 取消同批 C 层资源，再聚合 B；已完成的资源保留完成状态。
+	for cid := range contents {
+		if err = s.syncResources(tx, cid, "cancelled", nil, nil, ""); err != nil {
+			return nil, err
+		}
 	}
 	// 释放 Rows 后才能提交单连接事务，提交成功才向服务层确认结果。
 	if err = tx.Commit(); err != nil {

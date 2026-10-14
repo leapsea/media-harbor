@@ -271,6 +271,7 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 	}
 	var event struct {
 		Kind, Lease, RetryAfter, Page, Shortcode, AuthFailure, Host string
+		URL                                                         string
 		Cookies                                                     []credentials.Cookie
 		SetCookies                                                  []string
 		Authenticated                                               bool
@@ -392,6 +393,13 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	case "post-check":
+		action, err := domain.GatePost(op.ctx, domain.PostCandidate{RemoteID: event.Shortcode, URL: event.URL})
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"action": action})
 	case "web-post":
 		// 网页解析属于 Go 业务；Python 只取得 SDK 会话中的原始页面。
 		post := instagramWebPost(event.Page, event.Shortcode)

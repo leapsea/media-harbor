@@ -334,3 +334,11 @@ textarea{resize:vertical;margin-bottom:8px;line-height:1.5}
  .storage-metrics { grid-column:1; }
  .storage-work-counts { grid-column:1 / 3; }
 }
+
+/* 休眠时间只控制该组件及其弹框，保持紧凑表单尺寸与小时分钟布局。 */
+.hour-minute-picker { width: 100%; min-width: 0; }
+.hour-minute-picker .p-inputtext { text-align: left; cursor: pointer; }
+.hour-minute-picker .p-inputtext:disabled { cursor: not-allowed; }
+.hour-minute-clock { width: 14px; height: 14px; cursor: pointer; }
+.hour-minute-panel { min-width: 160px !important; width: 160px; max-width: calc(100vw - 24px); --p-datepicker-panel-padding: 8px; --p-datepicker-time-picker-padding: 0; --p-datepicker-time-picker-font-size: 16px; }
+.hour-minute-panel .p-datepicker-time-picker { border-top: 0; padding: 0; }

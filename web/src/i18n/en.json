@@ -290,5 +290,6 @@
   "Instagram 登录会话失效": "Instagram session expired",
   "Instagram 登录需要验证": "Instagram verification required",
   "YouTube 登录 Cookie 已失效": "YouTube login Cookie expired",
-  "停用 {time}": "Disabled {time}"
+  "停用 {time}": "Disabled {time}",
+  "清单待确认": "Manifest pending"
 }

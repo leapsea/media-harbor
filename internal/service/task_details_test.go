@@ -65,13 +65,15 @@ func TestYouTubeTaskDetails(t *testing.T) {
 	content.Paths = []string{video, meta}
 	_ = a.Repo.SaveContent(&content)
 	task.Status = "completed"
+	// C 明确区分下载完成与平台无可用字幕/音频；详情不再通过文件缺失猜测状态。
+	task.Progress = []domain.TransferProgress{{Kind: "video", Status: "completed", BytesTotal: 6 * 1024 * 1024, BytesDone: 6 * 1024 * 1024}, {Kind: "metadata", Status: "completed"}, {Kind: "subtitles", Status: "skipped"}, {Kind: "audio", Status: "skipped"}}
 	_ = a.Repo.SaveTask(&task)
 	detail, err := a.TaskDetails(s.ID)
 	if err != nil || len(detail.Items) != 1 {
 		t.Fatalf("%+v %v", detail, err)
 	}
 	parts := detail.Items[0].Parts
-	if len(parts) != 4 || parts[0].BytesTotal != 6*1024*1024 || parts[0].Status != "completed" || len(parts[1].Labels) != 2 || parts[2].Status != "skipped" || parts[3].Status != "skipped" {
+	if len(parts) != 5 || parts[0].BytesTotal != 6*1024*1024 || parts[0].Status != "completed" || parts[1].Kind != "metadata" || parts[2].Kind != "comments" || parts[3].Status != "skipped" || parts[4].Status != "skipped" {
 		t.Fatalf("%+v", parts)
 	}
 }

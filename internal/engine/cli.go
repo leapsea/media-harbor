@@ -138,6 +138,9 @@ func (c CLI) common(s domain.Subscription) []string {
 // Scan 枚举当前平台可获取内容，不把引擎未返回的历史判定为完整。
 // 非零退出码仍允许返回已解析的部分结果。
 // 服务层同时持久化发现内容并标记扫描失败。
+// SupportsPostTasks 表示正式引擎通过 Go 控制协议执行解析前核对。
+func (c CLI) SupportsPostTasks() bool { return true }
+
 func (c CLI) Scan(ctx context.Context, s domain.Subscription, itemLimit int, log func(string), emit func(domain.ScanResult) error) (domain.ScanResult, error) {
 	return c.scan(ctx, s, itemLimit, nil, log, emit)
 }
@@ -180,6 +183,13 @@ func (c CLI) ScanIncremental(ctx context.Context, s domain.Subscription, itemLim
 
 // scan 保留普通全量枚举入口，仅由增量追加平台停止参数。
 func (c CLI) scan(ctx context.Context, s domain.Subscription, itemLimit int, extra []string, log func(string), emit func(domain.ScanResult) error) (domain.ScanResult, error) {
+	if s.Platform == "youtube" && domain.TaskMode(s.Platform, s.URL) == "content" {
+		id := domain.PostIdentity(s.Platform, domain.Content{URL: s.URL})
+		if id != "" {
+			log("生产者：从单视频地址取得标识，数据库核对后才解析；媒体 " + id)
+			return domain.ScanResult{}, emit(domain.ScanResult{Items: []domain.Content{{RemoteID: id, URL: s.URL}}})
+		}
+	}
 	if p := c.pipeline(s.Platform); p != nil {
 		release, err := p.acquireProducer(ctx, log)
 		if err != nil {
@@ -388,7 +398,7 @@ func parseInstagram(raw []byte) (domain.ScanResult, error) {
 			mediaType = "video"
 		}
 		remoteID := id + "-" + strconv.Itoa(num)
-		result.Items = append(result.Items, domain.Content{RemoteID: remoteID, URL: u, Title: str(m["description"]), Published: date, Asset: num, MediaType: mediaType})
+		result.Items = append(result.Items, domain.Content{RemoteID: remoteID, URL: u, Title: str(m["description"]), Published: date, Asset: num, MediaType: mediaType, ExpectedAssets: intValue(m["count"])})
 		var sourceURL string
 		if err := json.Unmarshal(row[1], &sourceURL); err != nil {
 			return result, err
@@ -397,6 +407,8 @@ func parseInstagram(raw []byte) (domain.ScanResult, error) {
 	}
 	return result, scanErr
 }
+
+func intValue(v any) int { n, _ := strconv.Atoi(str(v)); return n }
 
 // 引擎版本可能改变日期表示，支持标准时间和 gallery-dl 时间字符串。
 // 解析不到日期返回零值，最终模板回退到下载日期。

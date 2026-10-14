@@ -7,6 +7,7 @@ import YouTubeOptions from './YouTubeOptions.vue'
 import UISettingsOptions from './UISettingsOptions.vue'
 import StorageManagement from './StorageManagement.vue'
 import ToggleSwitch from 'primevue/toggleswitch'
+import HourMinutePicker from './HourMinutePicker.vue'
 import { formatDate } from '../utils/formatDate'
 import { useHashNavigation } from '../composables/useHashNavigation'
 /**
@@ -146,12 +147,16 @@ async function removeCookie(platform: string) {
    <YouTubeOptions v-model="form.youtube" />
   </section>
   <section v-show="category === 'scheduling'" class="panel settings-panel" :aria-label="t('并发调度设置')">
-   <!-- 每日休眠使用原生时间选择控件，关闭后保留窗口，跨午夜由后台解释。 -->
+   <!-- 每日休眠以24小时弹框选择小时分钟，保存仍沿用HH:mm与原时区。 -->
    <div class="settings-group"><h3>{{ t('每日休眠') }}</h3>
     <div class="form-row"><label for="sleep-enabled">{{ t('启用休眠') }}</label><ToggleSwitch v-model="form.sleep.enabled" input-id="sleep-enabled" :disabled="store.busy" /></div>
     <div class="form-grid">
+     <label for="sleep-start-time">{{ t('开始时间') }}<HourMinutePicker v-model="form.sleep.start" input-id="sleep-start-time" :label="t('开始时间')" :required="form.sleep.enabled" :disabled="!form.sleep.enabled || store.busy" /></label>
+     <label for="sleep-end-time">{{ t('结束时间') }}<HourMinutePicker v-model="form.sleep.end" input-id="sleep-end-time" :label="t('结束时间')" :required="form.sleep.enabled" :disabled="!form.sleep.enabled || store.busy" /></label>
+     <!-- 历史资产：原生time控件的弹框及12/24小时显示取决于系统地区。
      <label>{{ t('开始时间') }}<input v-model="form.sleep.start" type="time" :required="form.sleep.enabled" :disabled="!form.sleep.enabled || store.busy"></label>
      <label>{{ t('结束时间') }}<input v-model="form.sleep.end" type="time" :required="form.sleep.enabled" :disabled="!form.sleep.enabled || store.busy"></label>
+     -->
      <label>{{ t('休眠时区') }}<select v-model="form.sleep.timezone" :disabled="!form.sleep.enabled || store.busy"><option v-for="zone in [...new Set([form.sleep.timezone, ...sleepTimezones])]" :key="zone" :value="zone">{{ zone }}</option></select></label>
     </div>
     <small class="help">{{ t('支持跨午夜；休眠时暂停采集和新下载，当前媒体完成后停止，结束后自动继续。') }}</small>

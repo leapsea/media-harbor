@@ -10,7 +10,8 @@ import (
 // preparationEngine 记录平台解析调用，仓储仍使用真实 SQLite。
 type preparationEngine struct {
 	fakeEngine
-	prepared []string
+	prepared  []string
+	languages []string
 }
 
 func (e *preparationEngine) Scan(_ context.Context, _ domain.Subscription, _ int, _ func(string), emit func(domain.ScanResult) error) (domain.ScanResult, error) {
@@ -18,9 +19,10 @@ func (e *preparationEngine) Scan(_ context.Context, _ domain.Subscription, _ int
 	return domain.ScanResult{}, emit(domain.ScanResult{Items: []domain.Content{{RemoteID: "done"}, {RemoteID: "failed"}, {RemoteID: "new"}, {RemoteID: "new"}}})
 }
 
-func (e *preparationEngine) Prepare(_ context.Context, _ domain.Subscription, item domain.Content, _ domain.YouTubeOptions, _ func(string)) error {
+func (e *preparationEngine) Prepare(_ context.Context, sub domain.Subscription, item domain.Content, _ domain.YouTubeOptions, _ func(string)) error {
 	// 已有格式的重复和完成项不能被交给解析器重新请求。
 	e.prepared = append(e.prepared, item.RemoteID)
+	e.languages = append(e.languages, sub.RequestLanguage)
 	return nil
 }
 
@@ -48,6 +50,10 @@ func TestProducerPreparesOnlyNeededDownloads(t *testing.T) {
 	_, err := a.streamScan(context.Background(), sub, 10, "full", func(string) {}, func(domain.ScanResult) error { return nil })
 	if err != nil {
 		t.Fatal(err)
+	}
+	settings, _ := a.Repo.Settings()
+	if !reflect.DeepEqual(e.languages, []string{settings.UI.Language, settings.UI.Language}) {
+		t.Fatalf("准备和消费者的语言缓存身份不一致：%v", e.languages)
 	}
 	if !reflect.DeepEqual(e.prepared, []string{"failed", "new"}) {
 		// 同一批次重复的新媒体也只能准备一次，不放大平台请求。

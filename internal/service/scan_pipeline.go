@@ -2,12 +2,15 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"media-harbor/internal/config"
 	"media-harbor/internal/domain"
 	"media-harbor/internal/engine"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,6 +23,46 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 			err = fmt.Errorf("扫描引擎异常：%v", value)
 		}
 	}()
+	postAware := false
+	if scanner, ok := a.Engine.(domain.PostScanner); ok {
+		postAware = scanner.SupportsPostTasks()
+	}
+	var boundary atomic.Bool
+	if postAware {
+		ctx = domain.WithPostGate(ctx, func(candidate domain.PostCandidate) (string, error) {
+			current, readErr := a.Repo.Subscription(sub.ID)
+			if readErr != nil {
+				return "", readErr
+			}
+			settings, readErr := a.Repo.Settings()
+			if readErr != nil {
+				return "", readErr
+			}
+			current.RequestLanguage = settings.UI.Language
+			options := settings.YouTube
+			if current.YouTube != nil {
+				options = *current.YouTube
+			}
+			key := domain.PostIdentity(current.Platform, domain.Content{RemoteID: candidate.RemoteID, URL: candidate.URL})
+			post, readErr := a.Repo.Post(sub.ID, key)
+			if errors.Is(readErr, sql.ErrNoRows) {
+				return "continue", nil
+			}
+			if readErr != nil {
+				return "", readErr
+			}
+			if kind != "catchup" && post.ManifestComplete && post.Status == "completed" && slices.Equal(post.Kinds, domain.ExpectedKinds(current.Platform, options)) {
+				if kind == "scan" {
+					boundary.Store(true)
+					log(fmt.Sprintf("增量扫描命中本地缓存；帖子 %s；B层全部 %d 个资源完成，停止后续历史检查与分页", key, post.Expected))
+					return "stop", nil
+				}
+				log(fmt.Sprintf("数据库核对 B层已完成；帖子 %s；跳过解析与下载，继续下一条", key))
+				return "skip", nil
+			}
+			return "continue", nil
+		})
+	}
 	known := map[string]bool{}
 	indexed := map[string]domain.Content{}
 	var knownIDs []string
@@ -31,10 +74,21 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 		for _, item := range items {
 			if item.SubscriptionID == sub.ID {
 				indexed[item.RemoteID] = item
-				if kind == "scan" {
+				if kind == "scan" && !postAware {
 					known[item.RemoteID] = true
 					knownIDs = append(knownIDs, item.RemoteID)
 				}
+			}
+		}
+	}
+	if postAware && kind == "scan" {
+		posts, readErr := a.Repo.Posts(sub.ID)
+		if readErr != nil {
+			return result, readErr
+		}
+		for _, post := range posts {
+			if post.ManifestComplete && post.Status == "completed" {
+				knownIDs = append(knownIDs, post.RemoteID)
 			}
 		}
 	}
@@ -44,6 +98,38 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 			return consume(batch)
 		}
 		for _, item := range batch.Items {
+			// 每个 B 的决策读取当前 A 和设置，GUI/CLI 修改参与下一条处理。
+			current, readErr := a.Repo.Subscription(sub.ID)
+			if readErr != nil {
+				return readErr
+			}
+			settings, readErr := a.Repo.Settings()
+			if readErr != nil {
+				return readErr
+			}
+			current.RequestLanguage = settings.UI.Language
+			options := settings.YouTube
+			if current.YouTube != nil {
+				options = *current.YouTube
+			}
+			if postAware {
+				action, gateErr := domain.GatePost(ctx, domain.PostCandidate{RemoteID: item.RemoteID, URL: item.URL})
+				if gateErr != nil {
+					return gateErr
+				}
+				if action == "stop" {
+					return domain.ErrScanBoundary
+				}
+				if action == "skip" {
+					continue
+				}
+			}
+			post, registerErr := a.Repo.RegisterPost(sub.ID, current.Platform, item, options)
+			if registerErr != nil {
+				return registerErr
+			}
+			item.PostID = post.ID
+
 			// 先检查增量边界，已有内容不再请求完整视频信息或媒体接口。
 			if known[item.RemoteID] {
 				log(fmt.Sprintf("增量扫描命中本地缓存；媒体 %s；停止后续历史检查与分页", item.RemoteID))
@@ -56,20 +142,19 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 				return err
 			}
 			if preparer, ok := a.Engine.(domain.MediaPreparer); ok {
-				settings, err := a.Repo.Settings()
-				if err != nil {
-					return err
-				}
-				options := settings.YouTube
-				if sub.YouTube != nil {
-					options = *sub.YouTube
-				}
 				// 已完成且无需补全、已排队或正在下载的条目不额外准备格式清单。
 				existing, exists := indexed[item.RemoteID]
 				needed := !exists || (existing.Status != "queued" && existing.Status != "running" &&
 					(existing.Status != "completed" || (kind == "catchup" && engine.NeedsSupplement(sub.Platform, existing, options))))
+				if postAware && exists && existing.Status == "completed" {
+					required, readErr := a.contentNeedsDownload(existing)
+					if readErr != nil {
+						return readErr
+					}
+					needed = needed || required
+				}
 				if needed {
-					if err := preparer.Prepare(ctx, sub, item, options, log); err != nil {
+					if err := preparer.Prepare(ctx, current, item, options, log); err != nil {
 						return err
 					}
 				}
@@ -103,7 +188,7 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}
-	if errors.Is(err, domain.ErrScanBoundary) {
+	if errors.Is(err, domain.ErrScanBoundary) || boundary.Load() {
 		err = nil
 	}
 	return result, err

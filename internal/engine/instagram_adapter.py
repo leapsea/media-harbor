@@ -44,9 +44,29 @@ def install_instagram_adapter():
     from gallery_dl import exception
     from gallery_dl.extractor.instagram import InstagramAPI
 
+    # 原始帖子身份交给 Go 核对 B；SDK 不读取数据库或决定业务完成状态。
+    def allowed(shortcode, address):
+        if not os.environ.get("MEDIA_HARBOR_CONTROL"):
+            return True
+        action = control({"Kind": "post-check", "Shortcode": str(shortcode), "URL": address})["action"]
+        if action == "stop":
+            raise exception.StopExtraction()
+        return action != "skip"
+
+    from gallery_dl.extractor.instagram import InstagramExtractor
+    original_parse = InstagramExtractor._parse_post
+    def parse_post(self, post):
+        code = post.get("code") or post.get("shortcode") or ""
+        if code and not allowed(code, f"{self.root}/p/{code}/"):
+            return {"_files": []}
+        return original_parse(self, post)
+    InstagramExtractor._parse_post = parse_post
+
     original_media = InstagramAPI.media
 
     def media(self, shortcode):
+        if not allowed(shortcode, f"{self.extractor.root}/p/{shortcode}/"):
+            return
         started = time.monotonic()
         self.extractor.log.info("帖子 %s：开始请求媒体接口", shortcode)
         try:

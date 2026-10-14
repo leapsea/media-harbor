@@ -110,6 +110,9 @@ func (a *App) placeFiles(s domain.Subscription, c *domain.Content, dir string) e
 		for _, tag := range tags {
 			c.Tags = appendUnique(c.Tags, tag)
 		}
+		enriched := []domain.Content{*c}
+		enrichHistory(enriched, []domain.Subscription{s})
+		*c = enriched[0]
 		if e = a.Repo.SaveContent(c); e != nil {
 			return e
 		}
@@ -156,6 +159,9 @@ func (a *App) archive(c *domain.Content) error {
 			return e
 		}
 		c.Paths[i] = dst
+		enriched := []domain.Content{*c}
+		enrichHistory(enriched, []domain.Subscription{sub})
+		*c = enriched[0]
 		if e = a.Repo.SaveContent(c); e != nil {
 			return e
 		}

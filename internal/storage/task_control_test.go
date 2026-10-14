@@ -17,6 +17,11 @@ func TestCancelSubscriptionTasksAtomicScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	// B/C 必须关联到真实 A 配置，取消测试也使用完整领域关系。
+	sub := domain.Subscription{Platform: "youtube", URL: "https://www.youtube.com/@scope"}
+	if err = s.SaveSubscription(&sub); err != nil {
+		t.Fatal(err)
+	}
 	// 只有前两个状态可被取消，其他结束状态应保留原结果。
 	for i, status := range []string{"queued", "running", "completed", "failed", "cancelled", "skipped"} {
 		if err = s.AddContentAndTask(1, domain.Content{RemoteID: status}); err != nil {
@@ -97,6 +102,11 @@ func BenchmarkSubscriptionCancellation(b *testing.B) {
 				b.Fatal(err)
 			}
 			defer s.Close()
+			// B/C 必须关联到真实 A 配置，取消测试也使用完整领域关系。
+			sub := domain.Subscription{Platform: "youtube", URL: "https://www.youtube.com/@scope"}
+			if err = s.SaveSubscription(&sub); err != nil {
+				b.Fatal(err)
+			}
 			// 队列创建不进入计时，测量对象仅为取消操作本身。
 			for i := range 1000 {
 				if err = s.AddContentAndTask(1, domain.Content{RemoteID: fmt.Sprint(i)}); err != nil {
@@ -155,6 +165,11 @@ func TestCancelSubscriptionTasksRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	// B/C 必须关联到真实 A 配置，取消测试也使用完整领域关系。
+	sub := domain.Subscription{Platform: "youtube", URL: "https://www.youtube.com/@scope"}
+	if err = s.SaveSubscription(&sub); err != nil {
+		t.Fatal(err)
+	}
 	if err = s.AddContentAndTask(1, domain.Content{RemoteID: "rollback"}); err != nil {
 		t.Fatal(err)
 	}

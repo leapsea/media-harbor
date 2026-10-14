@@ -48,7 +48,8 @@ watch(windowKey, async () => {
     <p v-else-if="!details.items.length" class="empty">{{ t('暂无下载任务') }}</p>
     <article v-for="item in details.items" :key="item.key" class="detail-item" :data-content-key="item.key">
      <!-- 父任务直到全部附属阶段结束才完成；媒体流的 100% 不替代父状态。 -->
-     <div class="detail-heading"><span class="badge">{{ t('任务') }}</span><strong>{{ item.title }}</strong><span class="badge" :class="item.status">{{ item.status === 'skipped' ? t('已跳过') : t(labels[item.status]) }}</span></div>
+     <div class="detail-heading"><span class="badge">{{ t('任务') }}</span><strong>{{ item.title }}</strong><!-- 完成状态与资源数量直接来自 B，清单未知时不把可见 C 数量当作总数。 -->
+      <small class="detail-manifest">{{ item.manifest_complete ? `${item.completed}/${item.expected}` : t('清单待确认') }}</small><span class="badge" :class="item.status">{{ item.status === 'skipped' ? t('已跳过') : t(labels[item.status]) }}</span></div>
      <small v-if="item.error" class="detail-error">{{ item.error }}</small>
      <div v-for="part in item.parts" :key="`${part.task_id}-${part.kind}`" class="detail-part">
       <!-- 小文件以五像素点表示状态，未知大小不填入估算百分比。 -->
@@ -73,7 +74,7 @@ watch(windowKey, async () => {
 .detail-item{border:1px solid #dce5df;border-radius:8px;overflow:hidden;background:#fff;box-shadow:0 1px 3px #20343b08}
 .detail-item+.detail-item{margin-top:12px}
 /** 浅色标题区标明父任务，附属项使用轻分隔线，保持紧凑的两级层次。 */
-.detail-heading{display:flex;align-items:flex-start;gap:8px;padding:10px 12px;background:#f3f6f4;border-bottom:1px solid #dce5df}.detail-heading strong{flex:1;min-width:0;overflow-wrap:anywhere;font-size:14px;line-height:20px}.detail-heading .badge{flex:none}
+.detail-heading{display:flex;align-items:flex-start;gap:8px;padding:10px 12px;background:#f3f6f4;border-bottom:1px solid #dce5df}.detail-manifest{align-self:center;color:#627778;white-space:nowrap;font-size:12px}.detail-heading strong{flex:1;min-width:0;overflow-wrap:anywhere;font-size:14px;line-height:20px}.detail-heading .badge{flex:none}
 .detail-part{margin:0 12px;padding:8px 0}.detail-part+.detail-part{border-top:1px solid #edf1ee}
 .detail-item>.detail-error{margin:8px 12px 0}
 .detail-part-top{display:flex;gap:8px;align-items:center;justify-content:space-between}.detail-part-labels{display:flex;gap:4px;flex-wrap:wrap}

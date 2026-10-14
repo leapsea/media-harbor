@@ -632,6 +632,17 @@ func (a *App) tick(ctx context.Context) error {
 // 引擎输出写入订阅日期日志，JSON 扫描结果直接转换为内容。
 // 任务被删除或取消后，后台结果不会再次提交为完成。
 func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription, settings domain.Settings) {
+	latest, loadErr := a.Repo.Subscription(t.SubscriptionID)
+	if loadErr != nil {
+		a.finish(t, loadErr)
+		return
+	}
+	currentSettings, loadErr := a.Repo.Settings()
+	if loadErr != nil {
+		a.finish(t, loadErr)
+		return
+	}
+	s, settings = latest, currentSettings
 	s.RequestLanguage = settings.UI.Language
 	logStarted := time.Now()
 	writer, e := a.beginTaskLog(s, logStarted)
@@ -830,6 +841,10 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 	options := settings.YouTube
 	if s.YouTube != nil {
 		options = *s.YouTube
+	}
+	if _, planErr := a.Repo.RegisterPost(s.ID, s.Platform, c, options); planErr != nil {
+		a.finish(t, planErr)
+		return
 	}
 	dir := a.WorkPath(t)
 	log(fmt.Sprintf("开始下载帖子：%s · %s；资源序号 %d；发布日期 %s", c.RemoteID, c.Title, c.Asset, publicationLabel(c.Published)))

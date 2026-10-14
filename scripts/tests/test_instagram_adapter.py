@@ -1,6 +1,7 @@
 """离线验证详情网页补解析，覆盖推荐帖子、轮播与异常边界。"""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -14,6 +15,10 @@ spec.loader.exec_module(adapter)
 
 
 class AbortExtraction(Exception):
+    pass
+
+
+class StopExtraction(Exception):
     pass
 
 
@@ -38,10 +43,11 @@ class InstagramAdapterTest(unittest.TestCase):
 
     def install(self, original, page):
         api = type("API", (), {"media": original})
+        extractor = type("InstagramExtractor", (), {"_parse_post": lambda self, post: post, "root": "https://www.instagram.com"})
         modules = {
-            "gallery_dl": SimpleNamespace(exception=SimpleNamespace(AbortExtraction=AbortExtraction)),
+            "gallery_dl": SimpleNamespace(exception=SimpleNamespace(AbortExtraction=AbortExtraction, StopExtraction=StopExtraction)),
             "gallery_dl.extractor": SimpleNamespace(),
-            "gallery_dl.extractor.instagram": SimpleNamespace(InstagramAPI=api),
+            "gallery_dl.extractor.instagram": SimpleNamespace(InstagramAPI=api, InstagramExtractor=extractor),
         }
         with patch.dict(sys.modules, modules):
             adapter.install_instagram_adapter()
@@ -50,7 +56,22 @@ class InstagramAdapterTest(unittest.TestCase):
             log=SimpleNamespace(info=lambda *args: None),
             # 模拟真实 HTTP 响应，为正文解析与新增状态日志同时提供所需字段。
             request=lambda address, **kwargs: SimpleNamespace(text=page, status_code=200))
-        return client, AbortExtraction
+        return client, extractor
+
+    def test_completed_post_skips_interface_and_resource_parse(self):
+        # Go 决策 skip 时，两个 SDK 入口都不能调用原解析方法。
+        calls = []
+        client, extractor = self.install(lambda self, code: calls.append(code) or iter([]), "")
+        with patch.dict(os.environ, {"MEDIA_HARBOR_CONTROL": "http://localhost"}), patch.object(adapter, "control", return_value={"action": "skip"}, create=True):
+            self.assertEqual(list(client.media("target")), [])
+            self.assertEqual(extractor()._parse_post(self.post), {"_files": []})
+        self.assertEqual(calls, [])
+
+    def test_incremental_boundary_stops_before_interface(self):
+        client, _ = self.install(lambda self, code: self.fail("unexpected interface request"), "")
+        with patch.dict(os.environ, {"MEDIA_HARBOR_CONTROL": "http://localhost"}), patch.object(adapter, "control", return_value={"action": "stop"}, create=True):
+            with self.assertRaises(StopExtraction):
+                list(client.media("target"))
 
     def test_redirect_falls_back_to_webpage(self):
         # 原接口的失败由生成器抛出，与 gallery-dl 的分页阶段一致。

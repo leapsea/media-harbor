@@ -22,7 +22,7 @@ export interface Subscription {
 /** 一个文件可以同时承载评论和元数据，数量来自对应文件。 */
 export interface ContentFile { path: string; tags: string[]; comment_count?: number }
 export interface Content {
- id: number; subscription_id: number; remote_id: string; url: string; title: string
+ id: number; post_id?: number; expected_assets?: number; subscription_id: number; remote_id: string; url: string; title: string
  published: string; status: string; paths: string[]; tags: string[]; files: ContentFile[]; archived: boolean; error: string
 }
 export interface ContentHistoryPage { items: Content[]; total: number; page: number; page_size: number }
@@ -75,10 +75,14 @@ export interface DetailPart {
 	/** 当前执行阶段可用于解释零字节进度和平台等待。 */
 	phase?: string
  kind: string; status: string; bytes_total: number; bytes_done: number; percent: number
- error?: string; task_id: number; labels: string[]; number?: number
+ error?: string; resource_id: number; task_id: number; labels: string[]; number?: number
 }
-export interface DetailContent { key: string; title: string; status: string; parts: DetailPart[]; error?: string }
+export interface DetailContent { post_id: number; manifest_complete: boolean; expected: number; completed: number; key: string; title: string; status: string; parts: DetailPart[]; error?: string }
 export interface TaskDetails { platform: string; items: DetailContent[] }
 
 /** 配置存在、Cookie可用和平台能否运行分别展示。 */
 export interface CookieStatus { configured: boolean; usable: boolean; platform_enabled: boolean; state: string; reason?: string; revision: number; disabled_at?: string }
+
+/** A 保存配置；B 保存整帖期望清单；C 保存资源与附属项的实际下载状态。 */
+export interface PostTask { id: number; subscription_id: number; remote_id: string; url: string; title: string; status: string; kinds: string[]; manifest_complete: boolean; expected: number; completed: number; error?: string; updated_at: string }
+export interface DownloadItem { id: number; post_id: number; content_id: number; required: boolean; kind: string; status: string; outcome?: string; error?: string; paths: string[]; updated_at: string }

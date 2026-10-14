@@ -92,6 +92,21 @@ func (a *App) reconcileScanLocked(subscriptionID int64, items []domain.Content, 
 			continue
 		}
 		if !catchup {
+			// A 的期望产物新增后，C 已有媒体仍复用，只排队尚未完成的新增子项。
+			if existing.Status == "completed" {
+				needed, readErr := a.contentNeedsDownload(existing)
+				if readErr != nil {
+					err = readErr
+					return
+				}
+				if needed {
+					if err = a.retryContentLocked(existing, item, byContent[existing.ID]); err != nil {
+						return
+					}
+					retried++
+					continue
+				}
+			}
 			skipped++
 			continue
 		}
@@ -135,4 +150,21 @@ func (a *App) reconcileScanLocked(subscriptionID int64, items []domain.Content, 
 		retried++
 	}
 	return
+}
+
+// contentNeedsDownload 以持久 C 为准，配置更新不会把已有视频重新当成待下载文件。
+func (a *App) contentNeedsDownload(item domain.Content) (bool, error) {
+	if item.PostID == 0 {
+		return false, nil
+	}
+	resources, err := a.Repo.DownloadItems(item.PostID)
+	if err != nil {
+		return false, err
+	}
+	for _, resource := range resources {
+		if resource.ContentID == item.ID && resource.Required && resource.Status != "completed" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
