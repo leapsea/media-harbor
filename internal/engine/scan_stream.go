@@ -30,7 +30,7 @@ func scanStream(ctx context.Context, name string, args []string, sub domain.Subs
 	}
 	// stdout 承载结构化媒体，stdin 仅承载读取确认，stderr 独立记录引擎错误。
 	var input io.WriteCloser
-	if sub.Platform == "instagram" {
+	if sub.Platform == "instagram" || (sub.Platform == "youtube" && name == "python3") {
 		// 每条输出收到确认后才继续提取，首个已有媒体不会被后台历史请求越过。
 		cmd.Env = append(cmd.Env, "MEDIA_HARBOR_STREAM_ACK=1")
 		var err error

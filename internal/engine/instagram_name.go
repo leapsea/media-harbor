@@ -19,6 +19,13 @@ var instagramProfile = regexp.MustCompile(`https?://(?:www\.)?instagram\.com/([A
 
 // instagramPageName 请求原始帖子页面，只返回作者账号，不下载文件或创建任务。
 func (c CLI) instagramPageName(ctx context.Context, address string) (string, error) {
+	if p := c.pipeline("instagram"); p != nil {
+		release, err := p.acquireProducer(ctx, func(string) {})
+		if err != nil {
+			return "", err
+		}
+		defer release()
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return "", err

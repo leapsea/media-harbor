@@ -91,7 +91,13 @@ func (c CLI) downloadInstagram(ctx context.Context, sub domain.Subscription, ite
 		if err != nil {
 			return err
 		}
+		release, err := c.consumer(ctx, "instagram", outputLog)
+		if err != nil {
+			end()
+			return err
+		}
 		_, err = runWithEnv(ctx, "python3", args, outputLog, false, env)
+		release()
 		end()
 		if err != nil && strings.Contains(output.String(), "redirect to login page") {
 			err = fmt.Errorf("Instagram 下载需要登录：请在系统设置中编辑并保存有效 Cookie：%w", err)

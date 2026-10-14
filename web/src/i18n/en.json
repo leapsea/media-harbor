@@ -258,5 +258,16 @@
   "页面刷新失败": "Page refresh failed",
   "正在加载下载记录…": "Loading download history…",
   "任务日志行数": "Task log lines",
-  "{count} 行": "{count} lines"
+  "{count} 行": "{count} lines",
+  "下载并发": "Download concurrency",
+  "请求窗口（秒）": "Request window (s)",
+  "窗口请求上限": "Requests per window",
+  "最小请求间隔（秒）": "Minimum interval (s)",
+  "429 冷却（秒）": "429 cooldown (s)",
+  "队列与缓存": "Queue and cache",
+  "待下载队列上限": "Pending download limit",
+  "Instagram 缓存有效期（分钟）": "Instagram cache TTL (min)",
+  "Instagram 缓存条数": "Instagram cache entries",
+  "队列容量与缓存配置必须为正整数": "Queue and cache values must be positive integers",
+  "请求窗口与请求数必须为正整数，间隔与冷却不能为负数": "Window and request count must be positive; interval and cooldown cannot be negative"
 }

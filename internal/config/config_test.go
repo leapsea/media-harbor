@@ -8,7 +8,7 @@ func TestInitialSettings(t *testing.T) {
 		t.Setenv(key, "")
 	}
 	settings := Defaults()
-	if !settings.UseUploadDate || settings.YouTubeConcurrent != 2 || settings.InstagramConcurrent != 10 || settings.Template != "{platform}/{directory_name}/{year}/{month}{day}/{filename}" {
+	if !settings.UseUploadDate || settings.YouTubeConcurrent != 3 || settings.InstagramConcurrent != 6 || settings.Template != "{platform}/{directory_name}/{year}/{month}{day}/{filename}" {
 		t.Fatalf("settings=%+v", settings)
 	}
 	if settings.YouTube.AudioFormat != "m4a" || settings.YouTube.AudioQuality != "0" || settings.YouTube.Fragments != 6 {

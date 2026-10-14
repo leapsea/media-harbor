@@ -150,3 +150,36 @@ func TestAvatarFollowsDownloadArchive(t *testing.T) {
 		t.Fatal("修改了旧头像", err)
 	}
 }
+
+// PNG归档必须仍是PNG，不能因为目标目录尚无头像而使用默认jpg后缀。
+func TestAvatarArchivePreservesActualExtension(t *testing.T) {
+	app := testApp(t, fakeEngine{})
+	sub := addSub(t, app, "png-avatar", "instagram")
+	sub.StableID = "png-author"
+	if err := app.Repo.SaveSubscription(&sub); err != nil {
+		t.Fatal(err)
+	}
+	path := strings.TrimSuffix(engine.AvatarPath(app.Config.DownloadDir, sub), ".jpg") + ".png"
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("\x89PNG\r\n\x1a\n" + strings.Repeat("x", 32))
+	if err := os.WriteFile(path, body, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.archiveAvatar(sub); err != nil {
+		t.Fatal(err)
+	}
+	archived, err := app.AvatarFile(sub.ID)
+	if err != nil || filepath.Ext(archived) != ".png" || !strings.HasPrefix(archived, app.Config.ArchiveDir) {
+		t.Fatal(archived, err)
+	}
+	// 归档移动只留一个文件，接口仍能从同一博主身份找到它。
+	if _, err = os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("下载目录残留副本", err)
+	}
+	data, err := os.ReadFile(archived)
+	if err != nil || string(data) != string(body) {
+		t.Fatal("归档改写图片内容", err)
+	}
+}

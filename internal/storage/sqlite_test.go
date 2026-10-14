@@ -172,3 +172,41 @@ func TestContentAndProfileIdentity(t *testing.T) {
 		}
 	}
 }
+
+// 旧库只补入新字段，用户已有设置和再次重启后的自定义预算保持原样。
+func TestPipelineSettingsMigrationAndPersistence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "media.db")
+	defaults := config.Defaults()
+	s, err := Open(path, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.db.Exec(`UPDATE app_settings SET payload=json_remove(payload,'$.pipeline')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = Open(path, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := s.Settings()
+	if err != nil || saved.Pipeline != defaults.Pipeline {
+		t.Fatal(saved, err)
+	}
+	saved.Pipeline.InstagramSourceCacheTTLMinutes = 7
+	saved.Pipeline.YouTube.MaxRequests = 9
+	if err = s.SaveSettings(saved); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = Open(path, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	again, err := s.Settings()
+	if err != nil || !reflect.DeepEqual(again, saved) {
+		t.Fatal(again, err)
+	}
+}

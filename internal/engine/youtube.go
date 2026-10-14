@@ -18,19 +18,10 @@ import (
 func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item domain.Content, options domain.YouTubeOptions, dir string, log func(string)) error {
 	common := c.common(sub)
 	metadataPath := filepath.Join(dir, ".metadata.json")
-	metadataArgs := append(append([]string{}, common...), "--dump-single-json", "--no-playlist", "--skip-download", "--ignore-no-formats-error")
-	if options.Video || options.ExtractAudio {
-		metadataArgs = append(metadataArgs, "-f", options.Format)
-	}
-	if options.AutoSubtitles {
-		metadataArgs = append(metadataArgs, "--write-auto-subs", "--sub-langs", "all,-.*")
-	}
-	log("主任务：解析媒体格式与发布日期；附属任务尚未启动")
-	if sub.RequestLanguage != "" {
-		log("平台标题语言：" + sub.RequestLanguage)
-	}
-	metadata, err := run(ctx, "yt-dlp", append(metadataArgs, "--", item.URL), log, true)
+	metadataArgs := c.youtubeMetadataArgs(sub, options)
+	metadata, err := c.youtubeMetadata(ctx, sub, item, options, log, false)
 	if err != nil {
+		c.forgetYouTubeError(sub, item, options)
 		return err
 	}
 	if err = os.WriteFile(metadataPath, metadata, 0644); err != nil {
@@ -70,7 +61,7 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 		kind := map[string]string{"主视频": "video", "字幕": "subtitles", "缩略图": "thumbnail", "额外音频": "audio"}[stage]
 		total := youtubeTransferSize(metadata, kind)
 		for attempt := 1; attempt <= config.YouTubeMediaAttempts; attempt++ {
-			_, err := run(ctx, "yt-dlp", append(append([]string{}, cached...), stageArgs...), transferLog(log, kind, total), false)
+			_, err := c.runYouTube(ctx, append(append([]string{}, cached...), stageArgs...), transferLog(log, kind, total), false, "media")
 			if err == nil {
 				return nil
 			}
@@ -78,7 +69,7 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 				return youtubeDownloadError(stage, err)
 			}
 			log(fmt.Sprintf("%s：媒体请求 403；重新解析资源地址后重试", stage))
-			fresh, resolveErr := run(ctx, "yt-dlp", append(append([]string{}, metadataArgs...), "--", item.URL), log, true)
+			fresh, resolveErr := c.youtubeMetadata(ctx, sub, item, options, log, true)
 			if resolveErr != nil {
 				return resolveErr
 			}
@@ -137,14 +128,14 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 		child("元数据与评论", func() error {
 			if !options.Comments {
 				args := append(append([]string{}, cached...), "--skip-download", "--write-info-json", "--force-overwrites", "-o", filepath.Join(dir, "%(title)s-%(id)s.%(ext)s"))
-				_, err := run(ctx, "yt-dlp", args, log, false)
+				_, err := c.runYouTube(ctx, args, log, false, "media")
 				return err
 			}
 			args := append(append([]string{}, metadataArgs...), "--write-info-json", "--force-overwrites", "-o", filepath.Join(dir, "%(title)s-%(id)s.%(ext)s"))
 			if options.Comments {
 				args = append(args, "--write-comments")
 			}
-			updated, err := run(ctx, "yt-dlp", append(args, "--", item.URL), log, true)
+			updated, err := c.runYouTubeProducer(ctx, append(args, "--", item.URL), log, true)
 			if err != nil {
 				return err
 			}
@@ -218,6 +209,18 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 	}
 	log(fmt.Sprintf("主任务：附属任务全部结束；失败 %d 项；释放视频名额", len(failures)))
 	return errors.Join(failures...)
+}
+
+// youtubeMetadataArgs 不抓评论；同一份格式清单由主视频和附件复用。
+func (c CLI) youtubeMetadataArgs(sub domain.Subscription, options domain.YouTubeOptions) []string {
+	args := append(c.common(sub), "--dump-single-json", "--no-playlist", "--skip-download", "--ignore-no-formats-error")
+	if options.Video || options.ExtractAudio {
+		args = append(args, "-f", options.Format)
+	}
+	if options.AutoSubtitles {
+		args = append(args, "--write-auto-subs", "--sub-langs", "all,-.*")
+	}
+	return args
 }
 
 // youtubeTransferSize 只使用引擎提供的大小，无法确认时保持未知。

@@ -16,6 +16,12 @@ import (
 func TestCatchupReconcilesDownloads(t *testing.T) {
 	a := testApp(t, manyEngine{})
 	s := addSub(t, a, "catchup", "instagram")
+	// 此用例仅验证十五条状态对账，不启动消费者；背压由专门的队列测试验证。
+	settings, _ := a.Repo.Settings()
+	settings.Pipeline.QueueCapacity = 20
+	if err := a.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
 	states := []string{"completed", "failed", "cancelled", "queued", "running"}
 	for i := range states {
 		if err := a.Repo.AddContentAndTask(s.ID, domain.Content{RemoteID: fmt.Sprint(i + 1), URL: "https://example.com/old"}); err != nil {
@@ -64,7 +70,6 @@ func TestCatchupReconcilesDownloads(t *testing.T) {
 	if err = a.Repo.SaveTask(&scan); err != nil {
 		t.Fatal(err)
 	}
-	settings, _ := a.Repo.Settings()
 	a.execute(context.Background(), scan, s, settings)
 	after, _ := a.Repo.Contents()
 	if len(after) != 15 {

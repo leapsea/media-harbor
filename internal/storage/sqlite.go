@@ -37,6 +37,25 @@ func Open(path string, defaults domain.Settings) (*Store, error) {
 		return nil, e
 	}
 	// 中断的任务回到队列，下载程序使用原工作目录继续执行。
+	// 只迁移本版本新增的流水线字段，已有下载、界面及用户配置保持原值。
+	var payload string
+	if e = db.QueryRow("SELECT payload FROM app_settings WHERE id=1").Scan(&payload); e == nil {
+		var fields map[string]json.RawMessage
+		e = json.Unmarshal([]byte(payload), &fields)
+		if e == nil && fields["pipeline"] == nil {
+			fields["pipeline"], e = json.Marshal(defaults.Pipeline)
+			if e == nil {
+				b, e = json.Marshal(fields)
+				if e == nil {
+					_, e = db.Exec("UPDATE app_settings SET payload=? WHERE id=1", b)
+				}
+			}
+		}
+	}
+	if e != nil {
+		db.Close()
+		return nil, e
+	}
 	tasks, e := s.Tasks()
 	if e != nil {
 		return nil, e

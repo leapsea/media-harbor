@@ -37,8 +37,20 @@ export interface Directory {
 /** 展示参数单独建模，与下载行为分离。 */
 export interface UISettings { language: string; recent_downloads: number; history_page_size: number; task_page_size: number; task_log_lines: number }
 export interface Settings {
+	/** 解析请求预算与下载线程数独立，两个平台分别计时。 */
+	pipeline: {
+	 queue_capacity: number
+	 instagram: ProducerSettings; youtube: ProducerSettings
+	 instagram_source_cache_ttl_minutes: number; instagram_source_cache_capacity: number
+	}
  youtube_concurrent: number; instagram_concurrent: number
  template: string; auto_archive: boolean; use_upload_date: boolean; youtube: YouTubeOptions; ui: UISettings; debug: { test_item_limit: number }
+}
+
+/** 滑动窗口统计真实接口请求，包括分页、重试和重定向。 */
+export interface ProducerSettings {
+ window_seconds: number; max_requests: number
+ min_interval_seconds: number; cooldown_seconds: number
 }
 export interface Dashboard {
  version: string; language: string; subscriptions: number; subscription_names: Record<number, string>

@@ -108,3 +108,45 @@ func TestCreateAvatarBeforeMedia(t *testing.T) {
 		t.Fatal(response.Code, response.Body.String(), eng.calls)
 	}
 }
+
+// 启动迁移 downloads/归档中的旧头像，接口继续同源提供正确图片类型。
+func TestLegacyAvatarMigrationServesImageType(t *testing.T) {
+	root := t.TempDir()
+	db, err := storage.Open(filepath.Join(root, "media.db"), config.Defaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	sub := domain.Subscription{Platform: "instagram", URL: "https://www.instagram.com/legacy/", StableID: "legacy", CurrentName: "legacy"}
+	if err = db.SaveSubscription(&sub); err != nil {
+		t.Fatal(err)
+	}
+	// 两个挂载目录分别迁移，旧 data 目录不参与读取。
+	cfg := config.Config{DataDir: root, DownloadDir: filepath.Join(root, "downloads"), ArchiveDir: filepath.Join(root, "archive")}
+	body := []byte("GIF89a" + strings.Repeat("x", 32))
+	for _, dir := range []string{cfg.DownloadDir, cfg.ArchiveDir} {
+		path := strings.TrimSuffix(engine.AvatarPath(dir, sub), ".jpg") + ".img"
+		if err = os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(path, body, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := service.New(cfg, db, engine.CLI{DataDir: root})
+	response := httptest.NewRecorder()
+	Handler(app).ServeHTTP(response, httptest.NewRequest("GET", "/api/subscriptions/1/avatar", nil))
+	if response.Code != 200 || response.Header().Get("Content-Type") != "image/gif" || response.Body.String() != string(body) {
+		t.Fatal(response.Code, response.Header(), response.Body.String())
+	}
+	for _, dir := range []string{cfg.DownloadDir, cfg.ArchiveDir} {
+		path := engine.AvatarPath(dir, sub)
+		if filepath.Ext(path) != ".gif" {
+			t.Fatal(path)
+		}
+		old := strings.TrimSuffix(path, ".gif") + ".img"
+		if _, err = os.Stat(old); !os.IsNotExist(err) {
+			t.Fatal("旧img仍在", err)
+		}
+	}
+}

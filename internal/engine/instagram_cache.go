@@ -25,13 +25,15 @@ type instagramResolution struct {
 // instagramSourceCache 保留有界的会话快照，进程重启或淘汰后仍能从原帖子解析。
 // 同帖解析使用完成通知共享结果，等待者取消不影响其他下载。
 type instagramSourceCache struct {
-	mu      sync.Mutex
-	entries map[string]instagramSourceEntry
-	flights map[string]*instagramResolution
+	mu       sync.Mutex
+	entries  map[string]instagramSourceEntry
+	flights  map[string]*instagramResolution
+	ttl      time.Duration
+	capacity int
 }
 
 func newInstagramSourceCache() *instagramSourceCache {
-	return &instagramSourceCache{entries: map[string]instagramSourceEntry{}, flights: map[string]*instagramResolution{}}
+	return &instagramSourceCache{entries: map[string]instagramSourceEntry{}, flights: map[string]*instagramResolution{}, ttl: config.InstagramSourceCacheTTL, capacity: config.InstagramSourceCacheCapacity}
 }
 
 // URL 加媒体序号区分轮播资源，不把某张照片的地址用于同帖其他媒体。
@@ -50,17 +52,22 @@ func (cache *instagramSourceCache) put(batch domain.ScanResult) {
 			continue
 		}
 		cache.entries[instagramSourceKey(item.URL, item.Asset)] = instagramSourceEntry{source, time.Now()}
-		for len(cache.entries) > config.InstagramSourceCacheCapacity {
-			// 淘汰最早快照，队列再大也不会无限占用引擎内存。
-			var oldest string
-			var at time.Time
-			for key, entry := range cache.entries {
-				if at.IsZero() || entry.at.Before(at) {
-					oldest, at = key, entry.at
-				}
+		cache.trim()
+	}
+}
+
+// trim 在缓存锁内淘汰最早快照，设置降低容量时也立即生效。
+func (cache *instagramSourceCache) trim() {
+	for len(cache.entries) > max(1, cache.capacity) {
+		// 淘汰最早快照，队列再大也不会无限占用引擎内存。
+		var oldest string
+		var at time.Time
+		for key, entry := range cache.entries {
+			if at.IsZero() || entry.at.Before(at) {
+				oldest, at = key, entry.at
 			}
-			delete(cache.entries, oldest)
 		}
+		delete(cache.entries, oldest)
 	}
 }
 
@@ -70,7 +77,7 @@ func (cache *instagramSourceCache) get(item domain.Content) (domain.MediaSource,
 	key := instagramSourceKey(item.URL, item.Asset)
 	entry, ok := cache.entries[key]
 	// 时间窗口仅控制快照复用，不改变内容去重 ID 或历史记录。
-	if !ok || time.Since(entry.at) > config.InstagramSourceCacheTTL {
+	if !ok || time.Since(entry.at) > cache.ttl {
 		delete(cache.entries, key)
 		return domain.MediaSource{}, false
 	}
@@ -104,13 +111,13 @@ func (c CLI) instagramSource(ctx context.Context, sub domain.Subscription, item 
 	}
 	cache.mu.Lock()
 	// 首次检查与认领之间可能已有解析完成，重新检查避免紧接着重复请求。
-	if entry, ok := cache.entries[instagramSourceKey(item.URL, item.Asset)]; ok && time.Since(entry.at) <= config.InstagramSourceCacheTTL {
+	if entry, ok := cache.entries[instagramSourceKey(item.URL, item.Asset)]; ok && time.Since(entry.at) <= cache.ttl {
 		cache.mu.Unlock()
 		log("复用刚完成的同帖媒体解析结果")
 		return entry.source, nil
 	}
 	flight, waiting := cache.flights[item.URL]
-	// 仅同帖复用解析，不占用额外下载名额，也不串行化不同帖子。
+	// 仅同帖复用解析，不占用额外下载名额，其他帖子由平台生产者串行解析。
 	if !waiting {
 		flight = &instagramResolution{done: make(chan struct{})}
 		cache.flights[item.URL] = flight

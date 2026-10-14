@@ -142,10 +142,22 @@ async function removeCookie(platform: string) {
    <YouTubeOptions v-model="form.youtube" />
   </section>
   <section v-show="category === 'scheduling'" class="panel settings-panel" :aria-label="t('并发调度设置')">
-   <div class="form-grid">
-    <label>{{ t("YouTube 并发") }}<input v-model.number="form.youtube_concurrent" type="number" min="1" required></label>
-    <label>{{ t("Instagram 并发") }}<input v-model.number="form.instagram_concurrent" type="number" min="1" required></label>
+   <!-- 各平台分别编辑解析预算，下载名额只约束消费者。 -->
+   <div v-for="platform in (['instagram', 'youtube'] as const)" :key="platform" class="settings-group">
+    <h3>{{ platform === 'instagram' ? 'Instagram' : 'YouTube' }}</h3>
+    <div class="form-grid">
+     <label>{{ t('下载并发') }}<input v-model.number="form[platform === 'instagram' ? 'instagram_concurrent' : 'youtube_concurrent']" type="number" min="1" step="1" required></label>
+     <label>{{ t('请求窗口（秒）') }}<input v-model.number="form.pipeline[platform].window_seconds" type="number" min="1" step="1" required></label>
+     <label>{{ t('窗口请求上限') }}<input v-model.number="form.pipeline[platform].max_requests" type="number" min="1" step="1" required></label>
+     <label>{{ t('最小请求间隔（秒）') }}<input v-model.number="form.pipeline[platform].min_interval_seconds" type="number" min="0" step="0.1" required></label>
+     <label>{{ t('429 冷却（秒）') }}<input v-model.number="form.pipeline[platform].cooldown_seconds" type="number" min="0" step="0.1" required></label>
+    </div>
    </div>
+   <div class="settings-group"><h3>{{ t('队列与缓存') }}</h3><div class="form-grid">
+    <label>{{ t('待下载队列上限') }}<input v-model.number="form.pipeline.queue_capacity" type="number" min="1" step="1" required></label>
+    <label>{{ t('Instagram 缓存有效期（分钟）') }}<input v-model.number="form.pipeline.instagram_source_cache_ttl_minutes" type="number" min="1" step="1" required></label>
+    <label>{{ t('Instagram 缓存条数') }}<input v-model.number="form.pipeline.instagram_source_cache_capacity" type="number" min="1" step="1" required></label>
+   </div></div>
   </section>
   <section v-show="category === 'debug'" class="panel settings-panel" :aria-label="t('调试设置')">
    <div class="debug-settings">

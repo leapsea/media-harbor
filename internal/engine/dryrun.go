@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -25,15 +26,36 @@ var dryRunScript string
 func (c CLI) DryRun(ctx context.Context, sub domain.Subscription, options domain.YouTubeOptions, limit int, log func(string)) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	p := c.pipeline(sub.Platform)
+	var producerRelease func()
+	if p != nil {
+		var err error
+		producerRelease, err = p.acquireProducer(ctx, log)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if producerRelease != nil {
+				producerRelease()
+			}
+		}()
+	}
 	// 脚本通过命令参数执行，不创建临时脚本；Python 导入也禁止生成字节码。
 	script := dryRunScript
 	if sub.Platform == "instagram" {
 		script = instagramScript(script)
+	} else if p != nil {
+		// 共用 SDK HTTP 适配，但只读入口自己管理提取与输出，不运行 CLI main。
+		script = instagramTransport + "\n" + strings.Replace(youtubeTransport, "yt_dlp.main(sys.argv[1:])", "", 1) + "\n" + script
 	}
 	cmd := exec.CommandContext(ctx, "python3", "-B", "-u", "-c", script)
 	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	if sub.Platform == "instagram" {
-		env, end, err := c.instagramController().begin(ctx, "dryrun", log)
+	if sub.Platform == "instagram" || p != nil {
+		controller := c.instagramController()
+		if p != nil {
+			controller = p.requests
+		}
+		env, end, err := controller.begin(ctx, "dryrun", log)
 		if err != nil {
 			return err
 		}
@@ -93,16 +115,34 @@ func (c CLI) DryRun(ctx context.Context, sub domain.Subscription, options domain
 			}
 			probes, err := dryRunProbes(event.Metadata, sub.Platform, options, log)
 			if err == nil {
-				for _, probe := range probes {
-					if err = probeDryResponse(encoder, decoder, probe, 0, log); err != nil {
-						break
+				// 单条元数据已解析，内存探测交给下载消费者，扫描执行权暂时归还。
+				if producerRelease != nil {
+					producerRelease()
+					producerRelease = nil
+				}
+				var consumerRelease func()
+				consumerRelease, err = c.consumer(ctx, sub.Platform, log)
+				if err == nil {
+					for _, probe := range probes {
+						if err = probeDryResponse(encoder, decoder, probe, 0, log); err != nil {
+							break
+						}
 					}
+					consumerRelease()
 				}
 			}
 			if err != nil {
 				failure = err
 				cancel()
 				break
+			}
+			if p != nil {
+				producerRelease, err = p.acquireProducer(ctx, log)
+				if err != nil {
+					failure = err
+					cancel()
+					break
+				}
 			}
 			if err = encoder.Encode(map[string]string{"kind": "next"}); err != nil {
 				failure = err

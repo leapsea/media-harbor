@@ -23,11 +23,18 @@ type CLI struct {
 	PaidPolicy domain.PaidVideoPolicy
 	instagram  *instagramSourceCache
 	requests   *instagramRequests
+	pipelines  map[string]*platformPipeline
 }
 
 // NewCLI 将媒体快照限定在当前引擎实例，不跨账号或写入持久数据库。
 func NewCLI(dataDir string, policy domain.PaidVideoPolicy) CLI {
-	return CLI{DataDir: dataDir, PaidPolicy: policy, instagram: newInstagramSourceCache(), requests: newInstagramRequests()}
+	requests := newInstagramRequests()
+	youtube := newInstagramRequests()
+	youtube.platform = "YouTube"
+	c := CLI{DataDir: dataDir, PaidPolicy: policy, instagram: newInstagramSourceCache(), requests: requests,
+		pipelines: map[string]*platformPipeline{"instagram": newPlatformPipeline(requests, 10), "youtube": newPlatformPipeline(youtube, 2)}}
+	c.Configure(config.Defaults())
+	return c
 }
 
 // instagramController 在服务实例中共享；字面量 CLI 仍可用于独立工具及测试。
@@ -98,6 +105,10 @@ func (c CLI) common(s domain.Subscription) []string {
 		userAgent := config.InstagramRequestUserAgent()
 		args = append(args, "-o", "extractor.instagram.user-agent="+userAgent,
 			"-o", "extractor.instagram.headers="+config.InstagramHeaders)
+		// Go 统一掌握解析间隔及429期限，SDK 保留错误判断和有限重试次数。
+		// 否则旧 sleep-429 会让用户缩短冷却后的设置仍等待原来的一分钟。
+		// SDK 的零值表示停止429重试，最小非零值保留有限重试，实际等待由 Go 执行。
+		args = append(args, "-o", "extractor.instagram.sleep-request=0", "-o", "extractor.instagram.sleep-429=0.001", "-o", "extractor.instagram.sleep-retries=0.001", "-o", "downloader.http.sleep-429=0.001")
 	}
 	if _, err := os.Stat(c.CookiePath(s.Platform)); err == nil {
 		args = append(args, "--cookies", c.CookiePath(s.Platform))
@@ -150,6 +161,29 @@ func (c CLI) ScanIncremental(ctx context.Context, s domain.Subscription, itemLim
 
 // scan 保留普通全量枚举入口，仅由增量追加平台停止参数。
 func (c CLI) scan(ctx context.Context, s domain.Subscription, itemLimit int, extra []string, log func(string), emit func(domain.ScanResult) error) (domain.ScanResult, error) {
+	if p := c.pipeline(s.Platform); p != nil {
+		release, err := p.acquireProducer(ctx, log)
+		if err != nil {
+			return domain.ScanResult{}, err
+		}
+		defer func() {
+			if release != nil {
+				release()
+			}
+		}()
+		deliver := emit
+		emit = func(batch domain.ScanResult) error {
+			// SDK 等待 stdin 确认；释放解析执行权让恢复任务或视频准备继续。
+			release()
+			release = nil
+			if err := deliver(batch); err != nil {
+				return err
+			}
+			var err error
+			release, err = p.acquireProducer(ctx, log)
+			return err
+		}
+	}
 	if s.Platform == "instagram" && c.instagram != nil {
 		deliver := emit
 		emit = func(batch domain.ScanResult) error {
@@ -170,7 +204,7 @@ func (c CLI) scan(ctx context.Context, s domain.Subscription, itemLimit int, ext
 		}
 		log("使用 yt-dlp 逐条枚举媒体，发现后立即加入下载队列")
 		// 会员视频即使没有可下载格式也保留索引，交由下载阶段记录失败或跳过。
-		args = append(args, "--dump-json", "--flat-playlist", "--ignore-no-formats-error", "--", s.URL)
+		args = append(args, "--lazy-playlist", "--dump-json", "--flat-playlist", "--ignore-no-formats-error", "--", s.URL)
 	} else {
 		if itemLimit > 0 {
 			args = append(args, "--range", "1-"+strconv.Itoa(itemLimit))
@@ -181,6 +215,17 @@ func (c CLI) scan(ctx context.Context, s domain.Subscription, itemLimit int, ext
 		name = "python3"
 	}
 	var env []string
+	if p := c.pipeline(s.Platform); p != nil && s.Platform == "youtube" {
+		var end func()
+		var err error
+		env, end, err = p.requests.begin(ctx, "scan", log)
+		if err != nil {
+			return domain.ScanResult{}, err
+		}
+		defer end()
+		args = append([]string{"-u", "-c", youtubeScript}, args...)
+		name = "python3"
+	}
 	if s.Platform == "instagram" {
 		var end func()
 		var err error

@@ -42,7 +42,7 @@ func (p pipelineEngine) Download(ctx context.Context, sub domain.Subscription, i
 	return p.fakeEngine.Download(ctx, sub, item, options, dir, log)
 }
 
-// TestScanProducerBackpressure 覆盖内存通道和持久队列同时有界、取消解除阻塞。
+// TestScanProducerBackpressure 覆盖达到十条后不再解析下一条、取消解除阻塞。
 func TestScanProducerBackpressure(t *testing.T) {
 	p := pipelineEngine{count: config.ScanQueueCapacity*2 + 5, produced: make(chan int, config.ScanQueueCapacity*3)}
 	a := testApp(t, p)
@@ -61,8 +61,8 @@ func TestScanProducerBackpressure(t *testing.T) {
 		})
 		done <- err
 	}()
-	// 32 条持久队列、32 条通道缓冲和当前等待入队的一条；下一次写入必须等待。
-	for i := 1; i <= config.ScanQueueCapacity*2+1; i++ {
+	// 第十条已持久入队，但 SDK 确认仍阻塞；只有九条已确认，没有额外解析缓冲。
+	for i := 1; i < config.ScanQueueCapacity; i++ {
 		select {
 		case n := <-p.produced:
 			if n != i {
@@ -96,7 +96,7 @@ func TestScanProducerBackpressure(t *testing.T) {
 	a.mu.Unlock()
 	select {
 	case n := <-p.produced:
-		if n != config.ScanQueueCapacity*2+2 {
+		if n != config.ScanQueueCapacity {
 			t.Fatalf("resumed=%d", n)
 		}
 	case <-time.After(3 * time.Second):
@@ -218,7 +218,7 @@ func TestScanQueueReportsUnavailableConsumer(t *testing.T) {
 func TestScanQueueReportsRunningConsumer(t *testing.T) {
 	a := testApp(t, fakeEngine{})
 	sub := addSub(t, a, "consumer-status", "instagram")
-	for i := 0; i < config.ScanQueueCapacity; i++ {
+	for i := 0; i <= config.ScanQueueCapacity; i++ {
 		if err := a.Repo.AddContentAndTask(sub.ID, domain.Content{RemoteID: fmt.Sprint(i)}); err != nil {
 			t.Fatal(err)
 		}
@@ -234,7 +234,7 @@ func TestScanQueueReportsRunningConsumer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var line string
 	err := a.waitScanQueue(ctx, sub.ID, domain.Content{RemoteID: "new"}, false, func(message string) { line = message; cancel() })
-	if !errors.Is(err, context.Canceled) || !strings.Contains(line, "待执行 31 · 运行 1") || !strings.Contains(line, fmt.Sprintf("#%d", task.ID)) || !strings.Contains(line, "media 50.0%") || !strings.Contains(line, "429，限流等待") {
+	if !errors.Is(err, context.Canceled) || !strings.Contains(line, fmt.Sprintf("待执行 %d · 运行 1", config.ScanQueueCapacity)) || !strings.Contains(line, fmt.Sprintf("#%d", task.ID)) || !strings.Contains(line, "media 50.0%") || !strings.Contains(line, "429，限流等待") {
 		t.Fatalf("缺失消费者诊断：%s %v", line, err)
 	}
 }

@@ -1,6 +1,13 @@
 {
-  "youtube_concurrent": 2,
-  "instagram_concurrent": 10,
+  "youtube_concurrent": 3,
+  "instagram_concurrent": 6,
+  "pipeline": {
+    "queue_capacity": 16,
+    "instagram": {"window_seconds": 60, "max_requests": 20, "min_interval_seconds": 6, "cooldown_seconds": 62},
+    "youtube": {"window_seconds": 60, "max_requests": 20, "min_interval_seconds": 6, "cooldown_seconds": 62},
+    "instagram_source_cache_ttl_minutes": 60,
+    "instagram_source_cache_capacity": 64
+  },
   "template": "{platform}/{directory_name}/{year}/{month}{day}/{filename}",
   "auto_archive": false,
   "youtube": {

@@ -42,7 +42,15 @@ type App struct {
 // Repository 与 Engine 的实现仅在主程序中选择。
 // 构造时的目录快照会在 Dashboard 展示。
 func New(c config.Config, r domain.Repository, e domain.Engine) *App {
-	return &App{Config: c, Repo: r, Engine: e, active: map[int64]context.CancelFunc{}, activeInfo: map[int64]runningTaskInfo{}, queueWaits: map[int64]domain.PlatformRun{}, loggers: map[string]*subscriptionLogWriter{}, wake: make(chan struct{}, 1), directories: DetectDirectories(c)}
+	if configurable, ok := e.(domain.ConfigurableEngine); ok {
+		if settings, err := r.Settings(); err == nil {
+			configurable.Configure(settings)
+		}
+	}
+	app := &App{Config: c, Repo: r, Engine: e, active: map[int64]context.CancelFunc{}, activeInfo: map[int64]runningTaskInfo{}, queueWaits: map[int64]domain.PlatformRun{}, loggers: map[string]*subscriptionLogWriter{}, wake: make(chan struct{}, 1), directories: DetectDirectories(c)}
+	// 启动时校正现有头像后缀，保持旧接口及作者共享身份。
+	app.migrateAvatarExtensions()
+	return app
 }
 
 // NextRun 支持 @every 6h、@daily 和标准五字段 Cron。
@@ -285,6 +293,22 @@ func (a *App) SaveSettings(s domain.Settings) error {
 	if s.YouTubeConcurrent < 1 || s.InstagramConcurrent < 1 {
 		return fmt.Errorf("并发数量至少为 1")
 	}
+	// 兼容旧客户端整体保存；新增字段缺席时沿用当前流水线配置。
+	if s.Pipeline == (domain.PipelineSettings{}) {
+		current, err := a.Repo.Settings()
+		if err != nil {
+			return err
+		}
+		s.Pipeline = current.Pipeline
+	}
+	if s.Pipeline.QueueCapacity < 1 || s.Pipeline.InstagramSourceCacheTTLMinutes < 1 || s.Pipeline.InstagramSourceCacheCapacity < 1 {
+		return fmt.Errorf("队列容量与缓存配置必须为正整数")
+	}
+	for _, producer := range []domain.ProducerSettings{s.Pipeline.Instagram, s.Pipeline.YouTube} {
+		if producer.WindowSeconds < 1 || producer.MaxRequests < 1 || producer.MinIntervalSeconds < 0 || producer.CooldownSeconds < 0 {
+			return fmt.Errorf("请求窗口与请求数必须为正整数，间隔与冷却不能为负数")
+		}
+	}
 	if s.Template == "" {
 		return fmt.Errorf("目录模板不能为空")
 	}
@@ -310,6 +334,9 @@ func (a *App) SaveSettings(s domain.Settings) error {
 	}
 	err := a.Repo.SaveSettings(s)
 	if err == nil {
+		if configurable, ok := a.Engine.(domain.ConfigurableEngine); ok {
+			configurable.Configure(s)
+		}
 		a.wakeScheduler()
 	}
 	return err
@@ -498,6 +525,10 @@ func (a *App) tick(ctx context.Context) error {
 		limit := settings.YouTubeConcurrent
 		if s.Platform == "instagram" {
 			limit = settings.InstagramConcurrent
+		}
+		// 平台生产者恒为一个，下载并发不会提高采集和解析并行度。
+		if t.ContentID == 0 {
+			limit = 1
 		}
 		if counts[s.Platform+taskLane(t)] >= limit {
 			continue

@@ -22,6 +22,11 @@ type instagramRequests struct {
 	permit             chan struct{}
 	last, cooldown     time.Time
 	interval, fallback time.Duration
+	window             time.Duration
+	maximum            int
+	history            []time.Time
+	platform           string
+	changed            chan struct{}
 	server             *http.Server
 	address            string
 	ops                map[string]*instagramOperation
@@ -54,7 +59,19 @@ func (t instagramRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 
 func newInstagramRequests() *instagramRequests {
 	// 环境值在引擎实例建立时固定，不在每次请求中重新解释配置。
-	return &instagramRequests{permit: make(chan struct{}, 1), interval: config.InstagramRequestInterval(), fallback: config.InstagramCooldown(), ops: map[string]*instagramOperation{}}
+	return &instagramRequests{permit: make(chan struct{}, 1), interval: config.InstagramRequestInterval(), fallback: config.InstagramCooldown(), platform: "Instagram", changed: make(chan struct{}), ops: map[string]*instagramOperation{}}
+}
+
+// configure 保留已发请求，缩小窗口或保存设置不能重置请求预算。
+func (r *instagramRequests) configure(s domain.ProducerSettings) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.interval = time.Duration(s.MinIntervalSeconds * float64(time.Second))
+	r.fallback = time.Duration(s.CooldownSeconds * float64(time.Second))
+	r.window = time.Duration(s.WindowSeconds) * time.Second
+	r.maximum = s.MaxRequests
+	close(r.changed)
+	r.changed = make(chan struct{})
 }
 
 // wait 即使在冷却期间也可立即取消；所有引擎进程使用同一个实际发起时刻。
@@ -79,15 +96,29 @@ func (r *instagramRequests) wait(ctx context.Context, log func(string), stage st
 		if r.cooldown.After(due) {
 			due, reason = r.cooldown, "平台 429 统一冷却"
 		}
+		// 滑动窗口计入重试、重定向和分页等实际 HTTP 请求，不只统计帖子数。
+		now := time.Now()
+		for len(r.history) > 0 && now.Sub(r.history[0]) >= r.window {
+			r.history = r.history[1:]
+		}
+		if r.maximum > 0 && len(r.history) >= r.maximum {
+			boundary := r.history[len(r.history)-r.maximum].Add(r.window)
+			if boundary.After(due) {
+				due, reason = boundary, "生产者滑动窗口已满"
+			}
+		}
 		left := time.Until(due)
 		if left <= 0 {
 			// 实际获得许可时推进时钟，排队本身不会提前占用下一请求时间。
 			r.last = time.Now()
+			r.history = append(r.history, r.last)
 			r.mu.Unlock()
 			return release, nil
 		}
+		changed := r.changed
+		used, maximum, window := len(r.history), r.maximum, r.window
 		r.mu.Unlock()
-		message := fmt.Sprintf("Instagram 请求统一等待；阶段 %s；原因 %s；剩余 %s", stage, reason, left.Round(time.Millisecond))
+		message := fmt.Sprintf("%s 请求统一等待；阶段 %s；原因 %s；剩余 %s；窗口 %d/%d · %s", r.platform, stage, reason, left.Round(time.Millisecond), used, maximum, window)
 		log(message)
 		if stage == "media" {
 			// 下载保持运行状态，界面显示等待原因而不是误报零字节传输。
@@ -100,6 +131,8 @@ func (r *instagramRequests) wait(ctx context.Context, log func(string), stage st
 		timer := time.NewTimer(left)
 		select {
 		case <-timer.C:
+		case <-changed:
+			timer.Stop()
 		case <-ctx.Done():
 			timer.Stop()
 			release()
@@ -110,7 +143,9 @@ func (r *instagramRequests) wait(ctx context.Context, log func(string), stage st
 
 // rateLimited 必须先登记冷却再释放许可，避免下一请求越过刚收到的 429。
 func (r *instagramRequests) rateLimited(after string) time.Duration {
+	r.mu.Lock()
 	wait := r.fallback
+	r.mu.Unlock()
 	// Retry-After 是平台给出的等待要求，未提供时才使用本地默认值。
 	if seconds, err := strconv.ParseFloat(after, 64); err == nil && seconds >= 0 {
 		wait = time.Duration(seconds * float64(time.Second))
@@ -122,8 +157,36 @@ func (r *instagramRequests) rateLimited(after string) time.Duration {
 	if until := time.Now().Add(wait); until.After(r.cooldown) {
 		// 多处同时报告限流只能延长冷却，不能用较短响应覆盖已有期限。
 		r.cooldown = until
+		close(r.changed)
+		r.changed = make(chan struct{})
 	}
 	return time.Until(r.cooldown)
+}
+
+// waitMedia 只遵守平台冷却，不占单生产者许可或解析请求预算。
+// 已开始的流读取继续传输；下一次连接、重试可取消且按最新429期限等待。
+func (r *instagramRequests) waitMedia(ctx context.Context, log func(string)) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		r.mu.Lock()
+		left, changed := time.Until(r.cooldown), r.changed
+		r.mu.Unlock()
+		if left <= 0 {
+			return nil
+		}
+		log(fmt.Sprintf("%s 请求统一等待；阶段 media；原因 平台 429 统一冷却；剩余 %s", r.platform, left.Round(time.Millisecond)))
+		timer := time.NewTimer(min(left, config.ScanLogInterval))
+		select {
+		case <-timer.C:
+		case <-changed:
+			timer.Stop()
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		}
+	}
 }
 
 // begin 启动本机控制通道；令牌只存在于本次进程环境，不公开到业务 API。
@@ -180,6 +243,7 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 	}
 	var event struct {
 		Kind, Lease, RetryAfter, Page, Shortcode string
+		Media                                    bool
 		Status                                   int
 		Total, Offset                            int64
 	}
@@ -190,7 +254,14 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 	switch event.Kind {
 	case "acquire":
 		started := time.Now()
-		release, err := r.wait(op.ctx, op.log, op.stage)
+		// CDN 字节传输不占生产者请求预算；下载并发由消费者许可控制。
+		release := func() {}
+		var err error
+		if event.Media {
+			err = r.waitMedia(op.ctx, op.log)
+		} else {
+			release, err = r.wait(op.ctx, op.log, op.stage)
+		}
 		if err != nil {
 			http.Error(w, err.Error(), 499)
 			return
@@ -206,13 +277,13 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 		}
 		op.leases[lease] = release
 		r.mu.Unlock()
-		op.log(fmt.Sprintf("Instagram HTTP 请求获准；阶段 %s；许可 %s；等待 %s", op.stage, lease, time.Since(started).Round(time.Millisecond)))
+		op.log(fmt.Sprintf("%s HTTP 请求获准；阶段 %s；媒体传输 %t；许可 %s；等待 %s", r.platform, op.stage, event.Media, lease, time.Since(started).Round(time.Millisecond)))
 		_ = json.NewEncoder(w).Encode(map[string]string{"lease": lease})
 	case "release":
 		// 即使 SDK 关闭或请求异常，也归还许可；成功响应才生成传输起点。
 		if event.Status == 429 {
 			left := r.rateLimited(event.RetryAfter)
-			op.log(fmt.Sprintf("Instagram 收到 429；所有扫描、帖子解析与头像请求统一冷却 %s", left.Round(time.Millisecond)))
+			op.log(fmt.Sprintf("%s 收到 429；所有扫描、帖子解析与头像请求统一冷却 %s", r.platform, left.Round(time.Millisecond)))
 		}
 		r.mu.Lock()
 		release := op.leases[event.Lease]
@@ -222,15 +293,15 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 			// 头部已经返回，后续数据读取保留原下载器的流式与断点语义。
 			release()
 		}
-		op.log(fmt.Sprintf("Instagram HTTP 响应；阶段 %s；许可 %s；状态 %d", op.stage, event.Lease, event.Status))
-		if op.stage == "media" {
+		op.log(fmt.Sprintf("%s HTTP 响应；阶段 %s；许可 %s；状态 %d", r.platform, op.stage, event.Lease, event.Status))
+		if op.stage == "media" && r.platform == "Instagram" {
 			op.log(fmt.Sprintf("媒体 HTTP 响应；状态 %d", event.Status))
 			if event.Status == 401 || event.Status == 403 || event.Status == 404 || event.Status == 410 {
 				raw, _ := json.Marshal(map[string]int{"status": event.Status})
 				op.log("@instagram-source-rejected " + string(raw))
 			}
 		}
-		if op.stage == "media" && (event.Status == 200 || event.Status == 206) {
+		if op.stage == "media" && r.platform == "Instagram" && (event.Status == 200 || event.Status == 206) {
 			transfer(op.log, domain.TransferProgress{Kind: "media", Status: "running", Phase: "传输媒体", BytesTotal: event.Total, BytesDone: event.Offset})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})

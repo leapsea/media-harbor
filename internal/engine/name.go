@@ -32,7 +32,26 @@ func (c CLI) ResolveName(ctx context.Context, s domain.Subscription) (string, er
 		if err != nil {
 			return "", err
 		}
+		var release func()
+		if p := c.pipeline("youtube"); p != nil {
+			var err error
+			release, err = p.acquireProducer(ctx, func(string) {})
+			if err != nil {
+				return "", err
+			}
+			defer release()
+			release, err = p.requests.wait(ctx, func(string) {}, "author")
+			if err != nil {
+				return "", err
+			}
+			defer release()
+		}
 		response, err := http.DefaultClient.Do(req)
+		if response != nil && response.StatusCode == 429 {
+			if p := c.pipeline("youtube"); p != nil {
+				p.requests.rateLimited(response.Header.Get("Retry-After"))
+			}
+		}
 		if err != nil {
 			return "", fmt.Errorf("读取 YouTube 作者失败：%w", err)
 		}
@@ -54,7 +73,7 @@ func (c CLI) ResolveName(ctx context.Context, s domain.Subscription) (string, er
 	// 频道及播放列表只取首项元数据；标题不是作者，不能用列表标题替代。
 	if s.Platform == "youtube" {
 		args := append(c.common(s), "--playlist-end", "1", "--dump-single-json", "--flat-playlist", "--", s.URL)
-		raw, err := run(ctx, "yt-dlp", args, func(string) {}, true)
+		raw, err := c.runYouTubeProducer(ctx, args, func(string) {}, true)
 		if err != nil {
 			return "", err
 		}
@@ -97,6 +116,13 @@ func (c CLI) ResolveAuthor(ctx context.Context, s domain.Subscription) (domain.S
 	}
 	if s.Platform != "instagram" {
 		return domain.ScanResult{CurrentName: name}, nil
+	}
+	if p := c.pipeline("instagram"); p != nil {
+		release, err := p.acquireProducer(ctx, func(string) {})
+		if err != nil {
+			return domain.ScanResult{}, err
+		}
+		defer release()
 	}
 	args := append(c.common(s), "--dump-json", "--range", "1", "--", "https://www.instagram.com/"+url.PathEscape(name)+"/avatar/")
 	env, end, err := c.instagramController().begin(ctx, "author", func(string) {})

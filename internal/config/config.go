@@ -14,11 +14,14 @@ import (
 // DownloadLogInterval 限制重复进度输出，不影响错误和最终结果。
 const DownloadLogInterval = time.Second
 
+// AvatarHeaderBytes 与 HTTP 图片内容识别的最大探测长度一致。
+const AvatarHeaderBytes = 512
+
 // InstagramSourceCacheCapacity 只保留近期解析结果，避免随全量历史无限增长。
-const InstagramSourceCacheCapacity = 128
+const InstagramSourceCacheCapacity = 64
 
 // InstagramSourceCacheTTL 限制签名地址复用时间；地址失效时另行刷新一次。
-const InstagramSourceCacheTTL = 15 * time.Minute
+const InstagramSourceCacheTTL = 60 * time.Minute
 
 // InstagramMediaAttempts 只在媒体地址明确失效时重新解析，不放大 429 请求。
 const InstagramMediaAttempts = 2
@@ -30,7 +33,7 @@ func InstagramRequestInterval() time.Duration {
 
 // InstagramCooldown 在未提供 Retry-After 时决定平台统一冷却时长。
 func InstagramCooldown() time.Duration {
-	return seconds("INSTAGRAM_429_COOLDOWN_SECONDS", time.Minute)
+	return seconds("INSTAGRAM_429_COOLDOWN_SECONDS", 62*time.Second)
 }
 
 // seconds 允许隔离验收缩短等待，负数及非法值仍采用运行默认值。
@@ -44,8 +47,12 @@ func seconds(key string, fallback time.Duration) time.Duration {
 // YouTubeMediaAttempts 在媒体地址被拒绝后重新解析一次，不反复重试同一个签名地址。
 const YouTubeMediaAttempts = 2
 
+// YouTubeMetadataCacheTTL 保留近期格式清单，403 仍走串行生产者刷新。
+const YouTubeMetadataCacheTTL = 15 * time.Minute
+const YouTubeMetadataCacheCapacity = 128
+
 // ScanQueueCapacity 限制解析缓冲和每配置提前入队数量。
-const ScanQueueCapacity = 32
+const ScanQueueCapacity = 16
 
 // ScanQueueCheckInterval 等待下载消费者释放持久队列容量。
 const ScanQueueCheckInterval = time.Second
@@ -113,6 +120,9 @@ func Defaults() domain.Settings {
 	_ = json.Unmarshal(initialSettings, &settings)
 	settings.YouTubeConcurrent = number("YTDLP_MAX_CONCURRENT", settings.YouTubeConcurrent)
 	settings.InstagramConcurrent = number("GALLERY_DL_MAX_CONCURRENT", settings.InstagramConcurrent)
+	// 旧环境参数仅初始化新字段；之后以系统设置中的持久值为准。
+	settings.Pipeline.Instagram.MinIntervalSeconds = InstagramRequestInterval().Seconds()
+	settings.Pipeline.Instagram.CooldownSeconds = InstagramCooldown().Seconds()
 	return settings
 }
 

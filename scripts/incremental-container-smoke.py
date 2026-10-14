@@ -79,11 +79,10 @@ class Profile(InfoExtractor):
     def ie_key(cls): return 'YoutubeTab'
     _VALID_URL=r'https://www\.youtube\.com/@(?P<id>[^/?]+)'
     def _real_extract(self,url):
-        with urllib.request.urlopen('http://127.0.0.1:8001/profile/youtube') as response:
-            posts=json.load(response)
+        posts=self._download_json('http://127.0.0.1:8001/profile/youtube', 'author')
         def entries():
             for code in posts:
-                with urllib.request.urlopen('http://127.0.0.1:8001/visit/youtube/'+code): pass
+                self._download_json('http://127.0.0.1:8001/visit/youtube/'+code, code)
                 yield {'_type':'url','url':'https://www.youtube.com/watch?v='+code,'ie_key':'Youtube',
                        'id':code,'title':code,'channel_id':'author','channel':'author'}
         return self.playlist_result(entries(),'author','author',channel='author',channel_id='author')
@@ -93,7 +92,7 @@ class Video(InfoExtractor):
     def ie_key(cls): return 'Youtube'
     def _real_extract(self,url):
         code=self._match_id(url)
-        with urllib.request.urlopen('http://127.0.0.1:8001/post/youtube/'+code): pass
+        self._download_json('http://127.0.0.1:8001/post/youtube/'+code, code)
         return {'id':code,'title':code,'channel':'author','channel_id':'author',
                 'upload_date':'20261014','availability':'public',
                 'formats':[{'format_id':'fixture','url':'http://127.0.0.1:8001/media/youtube/'+code+'.mp4',
@@ -106,6 +105,10 @@ def install(self):
 yt_dlp.YoutubeDL.add_default_info_extractors=install
 yt_dlp.main(sys.argv[1:])
 '''
+
+
+YOUTUBE_SDK = YOUTUBE.split("\n", 1)[1].replace("yt_dlp.main(sys.argv[1:])", "")
+INSTAGRAM = INSTAGRAM.replace("exec(code)", "exec(" + repr(YOUTUBE_SDK) + ");exec(code)")
 
 
 def counts():
@@ -147,6 +150,8 @@ def run():
     try:
         settings = fixture.wait(lambda: fixture.request("/settings"), bool)
         settings["debug"]["test_item_limit"] = 10
+        settings["pipeline"]["youtube"]["min_interval_seconds"] = .02
+        settings["pipeline"]["youtube"]["max_requests"] = 1000
         # 验收同时检查早停与补全日志，窗口需覆盖两轮操作及媒体下载诊断。
         settings["ui"]["task_log_lines"] = 1000
         settings["youtube"].update(video=True, format="best", metadata=True, comments=False,

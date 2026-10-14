@@ -168,16 +168,42 @@ type DebugSettings struct {
 	TestItemLimit int `json:"test_item_limit"`
 }
 
-// Settings 中的并发上限由调度器实际执行。
+// ProducerSettings 只约束获取和解析请求，媒体传输使用独立消费者名额。
+type ProducerSettings struct {
+	WindowSeconds      int     `json:"window_seconds"`
+	MaxRequests        int     `json:"max_requests"`
+	MinIntervalSeconds float64 `json:"min_interval_seconds"`
+	CooldownSeconds    float64 `json:"cooldown_seconds"`
+}
+
+// PipelineSettings 的队列容量不包含正在传输的媒体；平台时钟彼此独立。
+type PipelineSettings struct {
+	QueueCapacity                  int              `json:"queue_capacity"`
+	Instagram                      ProducerSettings `json:"instagram"`
+	YouTube                        ProducerSettings `json:"youtube"`
+	InstagramSourceCacheTTLMinutes int              `json:"instagram_source_cache_ttl_minutes"`
+	InstagramSourceCacheCapacity   int              `json:"instagram_source_cache_capacity"`
+}
+
+// Settings 中的并发上限只用于下载消费者。
 type Settings struct {
-	YouTubeConcurrent   int            `json:"youtube_concurrent"`
-	InstagramConcurrent int            `json:"instagram_concurrent"`
-	Template            string         `json:"template"`
-	AutoArchive         bool           `json:"auto_archive"`
-	UseUploadDate       bool           `json:"use_upload_date"`
-	YouTube             YouTubeOptions `json:"youtube"`
-	UI                  UISettings     `json:"ui"`
-	Debug               DebugSettings  `json:"debug"`
+	YouTubeConcurrent   int              `json:"youtube_concurrent"`
+	InstagramConcurrent int              `json:"instagram_concurrent"`
+	Template            string           `json:"template"`
+	AutoArchive         bool             `json:"auto_archive"`
+	UseUploadDate       bool             `json:"use_upload_date"`
+	YouTube             YouTubeOptions   `json:"youtube"`
+	UI                  UISettings       `json:"ui"`
+	Debug               DebugSettings    `json:"debug"`
+	Pipeline            PipelineSettings `json:"pipeline"`
+}
+
+// ConfigurableEngine 在保存设置后更新共享调度器，不重启任务或复制 Cookie。
+type ConfigurableEngine interface{ Configure(Settings) }
+
+// MediaPreparer 在发现新媒体后、入队前准备可复用描述；解析失败仍由下载任务记录。
+type MediaPreparer interface {
+	Prepare(context.Context, Subscription, Content, YouTubeOptions, func(string)) error
 }
 
 // ScanResult 仅表示引擎在本次扫描中实际可获取的内容。

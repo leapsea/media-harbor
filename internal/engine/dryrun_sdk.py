@@ -26,7 +26,15 @@ def exchange(metadata, request, role="media"):
         if command["kind"] == "next":
             return
         probe = command["probe"]
-        status, body = request(probe["url"], probe.get("headers") or {})
+        # 内存探测是媒体消费者；还原阶段后下一条解析继续使用生产窗口。
+        stage = os.environ.get("MEDIA_HARBOR_STAGE", "dryrun")
+        os.environ["MEDIA_HARBOR_STAGE"] = "media"
+        os.environ["MEDIA_HARBOR_PROBE"] = "1"
+        try:
+            status, body = request(probe["url"], probe.get("headers") or {})
+        finally:
+            os.environ["MEDIA_HARBOR_STAGE"] = stage
+            os.environ.pop("MEDIA_HARBOR_PROBE", None)
         emit("probe", status=status, body=base64.b64encode(body).decode())
 
 
@@ -37,6 +45,7 @@ def youtube(payload):
         def save_cookies(self): pass
     options = payload["options"]
     params = {"logger": Logger(), "quiet": True, "simulate": True, "cachedir": False,
+              "extract_flat": "in_playlist", "lazy_playlist": True,
               "cookiefile": payload["cookie"] or None, "js_runtimes": {"node": {}}, "playlistend": payload["limit"],
               "format": options["format"] if options["video"] or options["extract_audio"] else "bestaudio/best",
               "writesubtitles": options["subtitles"], "writeautomaticsub": options["auto_subtitles"],
@@ -55,6 +64,8 @@ def youtube(payload):
                 for child in item["entries"]:
                     if child and count < payload["limit"]: deliver(child)
             elif count < payload["limit"]:
+                if item.get("_type") in ("url", "url_transparent"):
+                    item = ydl.extract_info(item["url"], download=False)
                 count += 1
                 exchange(ydl.sanitize_info(item), request)
         deliver(ydl.extract_info(payload["subscription"]["url"], download=False))
@@ -65,9 +76,14 @@ def instagram(payload):
     if os.path.isfile(payload["gallery_config"]): config.load((payload["gallery_config"],), strict=True)
     config.set(("cache",), "file", ":memory:")
     for key, value in {"cookies-update": False, "archive": None, "postprocessors": [], "actions": None,
+                       "sleep-request": 0, "sleep-429": 0.001, "sleep-retries": 0.001,
                        "async": False, "cookies": payload["cookie"] or None,
                        "user-agent": payload["user_agent"], "headers": payload["headers"]}.items():
         config.set((), key, value)
+    # Go 的窗口和冷却也覆盖只读探测，SDK 不另外叠加默认429等待。
+    config.set(("extractor", "instagram"), "sleep-request", 0)
+    config.set(("extractor", "instagram"), "sleep-429", 0.001)
+    config.set(("extractor", "instagram"), "sleep-retries", 0.001)
     logging.basicConfig(stream=sys.stderr, level=logging.INFO)
     count = [0]; author = [""]
     class ReadOnlyJob(job.Job):

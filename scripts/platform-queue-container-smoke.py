@@ -53,7 +53,8 @@ def setup():
     source = source.replace("body=b'GIF89a'", "while self.path.startswith('/media/ig-a/') and not os.path.exists('/data/release-ig-a'): time.sleep(.03)\n        body=b'GIF89a'")
     (fixture.RUN / "fixture/source.py").write_text(source)
     # 创建不同作者时头像身份也独立，避免素材提取器产生人为的身份冲突。
-    wrapper = fixture.WRAPPER.replace("code='avatar'", "code=self.url.rstrip('/').split('/')[-2]+'-avatar'")
+    wrapper = fixture.WRAPPER.replace("code=sys.argv[3]; sys.argv=['gallery-dl']+sys.argv[4:]; exec(code)", "code=sys.argv[3];args=sys.argv[4:];\n    if 'import yt_dlp' in code:\n        import os;os.execv('/fixture/bin/yt-dlp',['yt-dlp']+args)\n    sys.argv=['gallery-dl']+args;exec(code)")
+    wrapper = wrapper.replace("code='avatar'", "code=self.url.rstrip('/').split('/')[-2]+'-avatar'")
     for name, content in (("python3", wrapper), ("gallery-dl", wrapper), ("yt-dlp", YOUTUBE)):
         path = fixture.RUN / "fixture/bin" / name
         path.write_text(content)

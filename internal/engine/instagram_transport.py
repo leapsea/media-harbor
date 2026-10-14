@@ -20,11 +20,12 @@ def install_instagram_transport():
     original = HTTPAdapter.send
 
     def send(self, request, *args, **kwargs):
-        lease = control({"Kind": "acquire"})["lease"]
+        # 下载描述已准备好，媒体会话的 CDN 请求不占解析窗口。
+        lease = control({"Kind": "acquire", "Media": os.environ.get("MEDIA_HARBOR_STAGE") == "media"})["lease"]
         response = None
         try:
             response = original(self, request, *args, **kwargs)
-            if os.environ.get("MEDIA_HARBOR_STAGE") == "media" and response.status_code in (200, 206):
+            if os.environ.get("MEDIA_HARBOR_STAGE") == "media" and not os.environ.get("MEDIA_HARBOR_PROBE") and response.status_code in (200, 206):
                 # SDK 字节读取只报告原始计数，百分比、阶段与日志节流由 Go 处理。
                 read = response.iter_content
                 total = response.headers.get("Content-Range", "/"+response.headers.get("Content-Length", "0")).rsplit("/", 1)[-1]

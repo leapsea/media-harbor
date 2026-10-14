@@ -35,13 +35,14 @@ def run():
         (RUN / name).mkdir(parents=True)
     (RUN / "fixture/source.py").write_text(HTTP)
     (RUN / "data/fixture-items.json").write_text('["new2","new1"]')
-    # 只在素材 SDK 中取消自身等待，确认冷却确实来自 Go 而非脚本的睡眠。
-    (RUN / "data/gallery-dl.json").write_text(json.dumps({"extractor": {"sleep-request": 0, "sleep-retries": 0.001, "sleep-429": 0.001}}))
+    # 素材不设置 sleep-429，确认默认 SDK 等待确实由正式 Go 入口接管。
+    (RUN / "data/gallery-dl.json").write_text(json.dumps({"extractor": {"sleep-retries": 0.001}}))
     instagram = source.INSTAGRAM.replace("def items(self):", "def items(self):\n        owner='other' if '/other/' in self.url else 'author'")
     instagram = instagram.replace("'owner_id':'author'", "'owner_id':owner").replace("'username':'author'", "'username':owner")
     # 只读适配也直接导入 yt-dlp SDK，使用相同的离线提取器而不是访问真实平台。
     youtube_sdk = source.YOUTUBE.split("\n", 1)[1].replace("yt_dlp.main(sys.argv[1:])", "")
-    instagram = instagram.replace("exec(code)", "exec("+repr(youtube_sdk)+") if 'def exchange(' in code else None;exec(code)")
+    # source.INSTAGRAM 已统一注册真实 SDK 素材，不能重复覆盖安装函数形成递归。
+    # 历史入口：instagram.replace("exec(code)", "exec(youtube_sdk);exec(code)")。
     for name, script in (("python3", instagram), ("gallery-dl", instagram), ("yt-dlp", source.YOUTUBE)):
         path = RUN / "fixture/bin" / name
         path.write_text(script); path.chmod(0o755)
@@ -57,6 +58,8 @@ def run():
     try:
         settings = api.wait(lambda: api.request("/settings"), bool)
         settings["debug"]["test_item_limit"] = 10
+        settings["pipeline"]["youtube"]["min_interval_seconds"] = .02
+        settings["pipeline"]["youtube"]["max_requests"] = 1000
         settings["ui"]["task_log_lines"] = 1000
         settings["instagram_concurrent"] = 1
         settings["youtube"].update(video=True, format="best", metadata=True, comments=False,
@@ -80,7 +83,7 @@ def run():
         api.wait(lambda: api.request("/tasks"), lambda ts: not any(t["status"] in ("queued", "running") for t in ts))
         events = json.loads((RUN / "data/events.json").read_text())
         limited = next(e for e in events if e["path"] == "/post/instagram/new2")
-        ig = [e for e in events if "/instagram/" in e["path"]]
+        ig = [e for e in events if "/instagram/" in e["path"] and not e["path"].startswith("/media/")]
         after = [e for e in ig if e["at"] > limited["at"]]
         gap = min(e["at"] for e in after) - limited["at"]
         assert gap >= 1.9, (gap, after)

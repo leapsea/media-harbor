@@ -3,9 +3,12 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"media-harbor/internal/domain"
 	"media-harbor/internal/engine"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 // SubscriptionView 为任务管理附加本地头像地址，不改变订阅的持久化结构。
@@ -95,5 +98,33 @@ func (a *App) archiveAvatar(sub domain.Subscription) error {
 	} else if err != nil {
 		return err
 	}
-	return moveFile(src, engine.AvatarPath(a.Config.ArchiveDir, sub))
+	// 归档是移动原图，必须保留来源扩展名，不能回落到默认 jpg。
+	destination := engine.AvatarPath(a.Config.ArchiveDir, sub)
+	destination = strings.TrimSuffix(destination, filepath.Ext(destination)) + filepath.Ext(src)
+	return moveFile(src, destination)
+	// 历史资产：return moveFile(src, engine.AvatarPath(a.Config.ArchiveDir, sub))。
+}
+
+// migrateAvatarExtensions 只处理 downloads/archive 的旧头像，不下载也不复制文件。
+func (a *App) migrateAvatarExtensions() {
+	for _, root := range []string{a.Config.DownloadDir, a.Config.ArchiveDir} {
+		if root == "" {
+			continue
+		}
+		files, err := filepath.Glob(filepath.Join(root, "avatars", "instagram", "*.img"))
+		if err != nil {
+			slog.Warn("头像后缀迁移失败", "stage", "avatar-migration", "error", err)
+			continue
+		}
+		for _, path := range files {
+			destination, err := engine.NormalizeAvatar(path)
+			if err != nil {
+				slog.Warn("头像后缀迁移失败", "stage", "avatar-migration", "file", filepath.Base(path), "error", err)
+				continue
+			}
+			if destination != path {
+				slog.Info("头像后缀已更新", "stage", "avatar-migration", "from", filepath.Base(path), "to", filepath.Base(destination))
+			}
+		}
+	}
 }

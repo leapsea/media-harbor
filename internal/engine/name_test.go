@@ -49,10 +49,11 @@ func TestInstagramAuthorName(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "cookies", "instagram.txt"), []byte(cookie), 0600); err != nil {
 		t.Fatal(err)
 	}
-	original := http.DefaultClient
-	t.Cleanup(func() { http.DefaultClient = original })
+	// 生产网页请求显式使用 DefaultTransport，替身应拦截该传输而非默认客户端。
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
 	t.Setenv("INSTAGRAM_USER_AGENT", "test-browser")
-	http.DefaultClient = &http.Client{Transport: metadataTransport(func(r *http.Request) (*http.Response, error) {
+	http.DefaultTransport = metadataTransport(func(r *http.Request) (*http.Response, error) {
 		if r.Header.Get("User-Agent") != "test-browser" || r.Header.Get("Accept-Language") != "zh-CN,zh;q=0.9" || r.Header.Get("Referer") != "https://www.instagram.com/" {
 			t.Fatal("网页请求头未加载")
 		}
@@ -64,7 +65,7 @@ func TestInstagramAuthorName(t *testing.T) {
 		}
 		body := `<script type="application/json">{"viewer":{"username":"logged_in_user"},"media":{"code":"DeHR060yl2F","owner":{"username":"yen_210"}}}</script>`
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
-	})}
+	})
 	for address, want := range map[string]string{"https://www.instagram.com/alice/": "alice", "https://www.instagram.com/p/DeHR060yl2F/": "yen_210", "https://www.instagram.com/reel/DeHR060yl2F/": "yen_210"} {
 		name, err := (CLI{DataDir: dir}).ResolveName(context.Background(), domain.Subscription{Platform: "instagram", URL: address})
 		if err != nil || name != want {
