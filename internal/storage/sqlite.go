@@ -253,7 +253,7 @@ func (s *Store) SaveContent(v *domain.Content) error {
 	return tx.Commit()
 }
 
-// SaveTask 在同一事务内更新执行状态、C 层资源和 B 层完成聚合。
+// SaveTask 在同一事务内更新执行状态、下载资源任务和帖子任务完成聚合。
 func (s *Store) SaveTask(v *domain.Task) error {
 	tx, e := s.db.Begin()
 	if e != nil {

@@ -17,7 +17,7 @@ func TestCancelSubscriptionTasksAtomicScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	// B/C 必须关联到真实 A 配置，取消测试也使用完整领域关系。
+	// 帖子任务与下载资源任务必须关联到真实订阅配置配置，取消测试也使用完整领域关系。
 	sub := domain.Subscription{Platform: "youtube", URL: "https://www.youtube.com/@scope"}
 	if err = s.SaveSubscription(&sub); err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func BenchmarkSubscriptionCancellation(b *testing.B) {
 				b.Fatal(err)
 			}
 			defer s.Close()
-			// B/C 必须关联到真实 A 配置，取消测试也使用完整领域关系。
+			// 帖子任务与下载资源任务必须关联到真实订阅配置配置，取消测试也使用完整领域关系。
 			sub := domain.Subscription{Platform: "youtube", URL: "https://www.youtube.com/@scope"}
 			if err = s.SaveSubscription(&sub); err != nil {
 				b.Fatal(err)
@@ -165,7 +165,7 @@ func TestCancelSubscriptionTasksRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	// B/C 必须关联到真实 A 配置，取消测试也使用完整领域关系。
+	// 帖子任务与下载资源任务必须关联到真实订阅配置配置，取消测试也使用完整领域关系。
 	sub := domain.Subscription{Platform: "youtube", URL: "https://www.youtube.com/@scope"}
 	if err = s.SaveSubscription(&sub); err != nil {
 		t.Fatal(err)

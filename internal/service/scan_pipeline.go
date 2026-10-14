@@ -54,10 +54,10 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 			if kind != "catchup" && post.ManifestComplete && post.Status == "completed" && slices.Equal(post.Kinds, domain.ExpectedKinds(current.Platform, options)) {
 				if kind == "scan" {
 					boundary.Store(true)
-					log(fmt.Sprintf("增量扫描命中本地缓存；帖子 %s；B层全部 %d 个资源完成，停止后续历史检查与分页", key, post.Expected))
+					log(fmt.Sprintf("增量扫描命中本地缓存；帖子 %s；帖子任务的全部 %d 个下载资源已完成，停止后续历史检查与分页", key, post.Expected))
 					return "stop", nil
 				}
-				log(fmt.Sprintf("数据库核对 B层已完成；帖子 %s；跳过解析与下载，继续下一条", key))
+				log(fmt.Sprintf("数据库核对帖子任务已完成；帖子 %s；跳过解析与下载，继续下一条", key))
 				return "skip", nil
 			}
 			return "continue", nil
@@ -98,7 +98,7 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 			return consume(batch)
 		}
 		for _, item := range batch.Items {
-			// 每个 B 的决策读取当前 A 和设置，GUI/CLI 修改参与下一条处理。
+			// 每个帖子任务的决策读取当前订阅配置和设置，GUI/CLI 修改参与下一条处理。
 			current, readErr := a.Repo.Subscription(sub.ID)
 			if readErr != nil {
 				return readErr

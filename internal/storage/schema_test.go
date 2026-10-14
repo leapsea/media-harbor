@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// 新库直接建立当前模型；A/B/C、文件集合和执行账本同时初始化。
+// 新库直接建立当前模型；订阅配置、帖子任务和下载资源任务、文件集合和执行账本同时初始化。
 // 明确表集合可发现误留的迁移版本表，也不依赖不存在的历史数据库。
 func TestCurrentSchemaInitializesDirectly(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "media.db"), config.Defaults())
@@ -49,7 +49,7 @@ func TestCurrentSchemaInitializesDirectly(t *testing.T) {
 	}
 }
 
-// 当前结构重新打开只恢复运行状态，不重建 B/C 或重新解释阶段进度。
+// 当前结构重新打开只恢复运行状态，不重建帖子任务与下载资源任务或重新解释阶段进度。
 // 使用完成任务验证读取幂等性，避免把重启恢复与数据升级混为一谈。
 func TestCurrentPostResourcesPersistAcrossReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "media.db")

@@ -64,7 +64,14 @@ func Handler(app *service.App) http.Handler {
 		reply(w, v, e)
 	})
 	mux.HandleFunc("GET /api/task-groups", func(w http.ResponseWriter, r *http.Request) { v, e := app.TaskGroups(); reply(w, v, e) })
-	mux.HandleFunc("GET /api/subscriptions/{id}/details", func(w http.ResponseWriter, r *http.Request) { v, e := app.TaskDetails(id(r)); reply(w, v, e) })
+	// 浏览器关闭面板时取消帖子任务与下载资源任务查询；计时头便于区分服务端与前端加载耗时。
+	mux.HandleFunc("GET /api/subscriptions/{id}/details", func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		v, e := app.TaskDetails(r.Context(), id(r))
+		w.Header().Set("Server-Timing", fmt.Sprintf("details;dur=%.2f", float64(time.Since(start))/float64(time.Millisecond)))
+		reply(w, v, e)
+	})
+	// 历史读取：app.TaskDetails(id(r)) 没有传递 HTTP 请求取消信号。
 	mux.HandleFunc("GET /api/subscriptions/{id}/log", func(w http.ResponseWriter, r *http.Request) {
 		v, e := app.GroupLog(id(r))
 		reply(w, map[string]string{"log": v}, e)

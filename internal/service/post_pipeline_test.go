@@ -78,7 +78,7 @@ func TestPostGateChecksWholeManifestBeforeParsing(t *testing.T) {
 	}
 }
 
-// 执行时读取最新 A，GUI/CLI 保存后排队任务不能继续使用调度认领时的旧配置。
+// 执行时读取最新订阅配置，GUI/CLI 保存后排队任务不能继续使用调度认领时的旧配置。
 type latestConfigEngine struct {
 	fakeEngine
 	sub     domain.Subscription
@@ -109,7 +109,7 @@ func TestExecutionReloadsConfigurationFromA(t *testing.T) {
 	}
 }
 
-// 详情只显示一个调试资源时，父状态和 2/3 完成数量仍直接来自 B，不能局部推算完成。
+// 详情只显示一个调试资源时，父状态和 2/3 完成数量仍直接来自帖子任务，不能局部推算完成。
 func TestTaskDetailsReadsBAndCInsteadOfVisibleTaskTotals(t *testing.T) {
 	a := testApp(t, fakeEngine{})
 	sub := addSub(t, a, "detail-parent", "instagram")
@@ -131,7 +131,7 @@ func TestTaskDetailsReadsBAndCInsteadOfVisibleTaskTotals(t *testing.T) {
 	settings, _ := a.Repo.Settings()
 	settings.Debug.TestItemLimit = 1
 	_ = a.Repo.SaveSettings(settings)
-	detail, err := a.TaskDetails(sub.ID)
+	detail, err := a.TaskDetails(context.Background(), sub.ID)
 	if err != nil || len(detail.Items) != 1 {
 		t.Fatalf("detail=%+v err=%v", detail, err)
 	}

@@ -44,7 +44,7 @@ def install_instagram_adapter():
     from gallery_dl import exception
     from gallery_dl.extractor.instagram import InstagramAPI
 
-    # 原始帖子身份交给 Go 核对 B；SDK 不读取数据库或决定业务完成状态。
+    # 原始帖子身份交给 Go 核对帖子任务；SDK 不读取数据库或决定业务完成状态。
     def allowed(shortcode, address):
         if not os.environ.get("MEDIA_HARBOR_CONTROL"):
             return True

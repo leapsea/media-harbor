@@ -1,12 +1,16 @@
 package service
 
 import (
+	"context"
+	"errors"
+	"log/slog"
+	"media-harbor/internal/config"
 	"media-harbor/internal/domain"
 	"sort"
 	"time"
 )
 
-// DetailPart 对应持久 C 子任务；操作 ID 与执行时间仍来自执行账本。
+// DetailPart 对应持久化的下载资源任务；操作 ID 与执行时间仍来自执行账本。
 type DetailPart struct {
 	domain.TransferProgress
 	ResourceID int64    `json:"resource_id"`
@@ -15,7 +19,7 @@ type DetailPart struct {
 	Number     int      `json:"number,omitempty"`
 }
 
-// DetailContent 直接投影 B；期望清单与完整状态不再由可见子项推算。
+// DetailContent 直接投影帖子任务；期望清单与完整状态不再由可见子项推算。
 type DetailContent struct {
 	Key              string       `json:"key"`
 	PostID           int64        `json:"post_id"`
@@ -32,21 +36,44 @@ type TaskDetails struct {
 	Items    []DetailContent `json:"items"`
 }
 
-// TaskDetails 从 B/C 关联读取领域状态；执行账本只提供操作 ID 与执行排序。
-func (a *App) TaskDetails(sid int64) (TaskDetails, error) {
+// TaskDetails 从帖子任务与下载资源任务关联读取领域状态；执行账本只提供操作 ID 与执行排序。
+func (a *App) TaskDetails(ctx context.Context, sid int64) (result TaskDetails, err error) {
+	begin := time.Now()
+	stage := "subscription"
+	var queryDuration time.Duration
+	var resourceCount int
+	// 慢请求记录配置读取、帖子任务与下载资源任务查询与投影耗时；正常的一秒轮询不刷屏。
+	defer func() {
+		elapsed := time.Since(begin)
+		if !errors.Is(err, context.Canceled) && (err != nil || elapsed >= config.TaskDetailsSlowThreshold) {
+			slog.Warn("任务详情读取", "subscription_id", sid, "stage", stage, "posts", len(result.Items), "resources", resourceCount, "query_elapsed", queryDuration, "elapsed", elapsed, "error", err)
+		}
+	}()
+	if err = ctx.Err(); err != nil {
+		return TaskDetails{}, err
+	}
 	sub, err := a.Repo.Subscription(sid)
 	if err != nil {
+		return TaskDetails{}, err
+	}
+	stage = "settings"
+	if err = ctx.Err(); err != nil {
 		return TaskDetails{}, err
 	}
 	settings, err := a.Repo.Settings()
 	if err != nil {
 		return TaskDetails{}, err
 	}
-	rows, err := a.Repo.PostDownloadRows(sid, settings.Debug.TestItemLimit)
+	stage = "post_download_query"
+	queryStart := time.Now()
+	rows, err := a.Repo.PostDownloadRows(ctx, sid, settings.Debug.TestItemLimit)
+	queryDuration = time.Since(queryStart)
 	if err != nil {
 		return TaskDetails{}, err
 	}
-	result := TaskDetails{Platform: sub.Platform, Items: []DetailContent{}}
+	stage = "projection"
+	resourceCount = len(rows)
+	result = TaskDetails{Platform: sub.Platform, Items: []DetailContent{}}
 	index := map[int64]int{}
 	numbers := map[string]int{}
 	created := map[int64]time.Time{}
@@ -89,7 +116,7 @@ func (a *App) TaskDetails(sid int64) (TaskDetails, error) {
 		}
 		result.Items[i].Parts = append(result.Items[i].Parts, DetailPart{TransferProgress: p, ResourceID: resource.ID, TaskID: task.ID, Labels: []string{label}, Number: number})
 	}
-	// 完成项进入历史区；排序只影响展示，不改变 B/C 和平台队列。
+	// 完成项进入历史区；排序只影响展示，不改变帖子任务与下载资源任务和平台队列。
 	unfinished := func(p DetailContent) bool { return p.Status == "running" || p.Status == "queued" }
 	orderTime := func(id int64) time.Time {
 		if !started[id].IsZero() {

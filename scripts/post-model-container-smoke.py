@@ -1,4 +1,4 @@
-"""正式镜像、SQLite 与 SDK 的 A/B/C 验收；素材最多五条，不访问外部平台。"""
+"""正式镜像、SQLite 与 SDK 的订阅配置、帖子任务和下载资源任务验收；素材最多五条，不访问外部平台。"""
 import importlib.util
 import json
 import os
@@ -72,7 +72,7 @@ def run():
                                   subtitles=False,auto_subtitles=False,thumbnail=False,extra_audio=False,extract_audio=False,fragments=1)
         api.request('/settings','PUT',settings)
         api.request('/cookies/instagram','PUT',{'content':'sessionid=offline-fixture'})
-        ig = api.request('/subscriptions','POST',{'platform':'instagram','url':'https://www.instagram.com/author/','display_name':'A-B-C Instagram','enabled':False})
+        ig = api.request('/subscriptions','POST',{'platform':'instagram','url':'https://www.instagram.com/author/','display_name':'帖子资源模型 Instagram','enabled':False})
         posts = scan(ig,'full')
         assert len(posts)==1 and posts[0]['status']=='completed' and posts[0]['expected']==posts[0]['completed']==2, posts
         children = api.request(f"/posts/{posts[0]['id']}/downloads")
@@ -89,10 +89,10 @@ def run():
         assert after.get('/post/instagram/cached',0)==before.get('/post/instagram/cached',0), after
         assert '/post/instagram/older' not in after, after
         report['instagram']={'post_expected_resources':2,'completed_post_detail_requests':0,'incremental_boundary_detail_requests':0}
-        print('PASS Instagram：一个B对应两个C；完成帖子不解析；增量在完成B之前停止',flush=True)
+        print('PASS Instagram：一个帖子任务对应两个下载资源任务；完成帖子不解析；增量在已完成帖子任务之前停止',flush=True)
         # 单视频创建立即执行，整个扫描/准备/下载只能请求一次视频详情。
         before = counts()
-        yt = api.request('/subscriptions','POST',{'platform':'youtube','url':'https://www.youtube.com/watch?v=single','display_name':'A-B-C YouTube','enabled':False})
+        yt = api.request('/subscriptions','POST',{'platform':'youtube','url':'https://www.youtube.com/watch?v=single','display_name':'帖子资源模型 YouTube','enabled':False})
         posts = finished(yt)
         assert len(posts)==1 and posts[0]['status']=='completed' and posts[0]['expected']==2, posts
         after = counts()
@@ -104,7 +104,7 @@ def run():
         before = counts()
         scan(yt,'full')
         assert counts().get('/post/youtube/single',0)==before.get('/post/youtube/single',0), counts()
-        # GUI/CLI 同用的配置保存 API 修改 A；下一次执行应从数据库取得新期望集合。
+        # GUI/CLI 同用的配置保存 API 修改订阅配置；下一次执行应从数据库取得新期望集合。
         yt['youtube'] = dict(settings['youtube'],thumbnail=True)
         api.request(f"/subscriptions/{yt['id']}",'PUT',yt)
         posts = scan(yt,'full')
@@ -113,7 +113,7 @@ def run():
         thumb = next(c for c in children if c['kind']=='thumbnail')
         assert thumb['status']=='completed' and thumb['outcome']=='unavailable', children
         report['youtube']={'single_video_parse_count':1,'completed_video_parse_count':0,'persisted_kinds':['video','metadata','thumbnail'],'configuration_reload':True,'missing_optional_outcome':'unavailable'}
-        # 服务重启保留 B/C 主键、完成状态和资源数量。
+        # 服务重启保留帖子任务与下载资源任务主键、完成状态和资源数量。
         ids = [(p['id'],p['remote_id']) for p in posts]
         subprocess.check_output(['docker','restart',NAME])
         restored = api.wait(lambda:api.request(f"/subscriptions/{yt['id']}/posts"),lambda ps:all(p['status']=='completed' for p in ps))
@@ -126,7 +126,7 @@ def run():
         report['current_schema_initialization'] = tables
 
         (RUN/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
-        print('PASS YouTube：单视频一次解析；完成B跳过；更新A加载新配置；重启保持B/C；报告：'+str(RUN/'report.json'),flush=True)
+        print('PASS YouTube：单视频一次解析；已完成帖子任务跳过；更新订阅后加载新配置；重启保持帖子任务与下载资源任务；报告：'+str(RUN/'report.json'),flush=True)
         if os.environ.get('SMOKE_UI_HOLD')=='1':
             print('UI_HOLD '+str(RUN),flush=True)
             deadline=time.monotonic()+60

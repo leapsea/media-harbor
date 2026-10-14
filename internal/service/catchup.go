@@ -92,7 +92,7 @@ func (a *App) reconcileScanLocked(subscriptionID int64, items []domain.Content, 
 			continue
 		}
 		if !catchup {
-			// A 的期望产物新增后，C 已有媒体仍复用，只排队尚未完成的新增子项。
+			// 订阅配置的期望产物新增后，下载资源任务已有媒体仍复用，只排队尚未完成的新增子项。
 			if existing.Status == "completed" {
 				needed, readErr := a.contentNeedsDownload(existing)
 				if readErr != nil {
@@ -152,7 +152,7 @@ func (a *App) reconcileScanLocked(subscriptionID int64, items []domain.Content, 
 	return
 }
 
-// contentNeedsDownload 以持久 C 为准，配置更新不会把已有视频重新当成待下载文件。
+// contentNeedsDownload 以持久下载资源任务为准，配置更新不会把已有视频重新当成待下载文件。
 func (a *App) contentNeedsDownload(item domain.Content) (bool, error) {
 	if item.PostID == 0 {
 		return false, nil

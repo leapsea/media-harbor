@@ -48,7 +48,7 @@ watch(windowKey, async () => {
     <p v-else-if="!details.items.length" class="empty">{{ t('暂无下载任务') }}</p>
     <article v-for="item in details.items" :key="item.key" class="detail-item" :data-content-key="item.key">
      <!-- 父任务直到全部附属阶段结束才完成；媒体流的 100% 不替代父状态。 -->
-     <div class="detail-heading"><span class="badge">{{ t('任务') }}</span><strong>{{ item.title }}</strong><!-- 完成状态与资源数量直接来自 B，清单未知时不把可见 C 数量当作总数。 -->
+     <div class="detail-heading"><span class="badge">{{ t('任务') }}</span><strong>{{ item.title }}</strong><!-- 完成状态与资源数量直接来自帖子任务，清单未知时不把可见下载资源任务数量当作总数。 -->
       <small class="detail-manifest">{{ item.manifest_complete ? `${item.completed}/${item.expected}` : t('清单待确认') }}</small><span class="badge" :class="item.status">{{ item.status === 'skipped' ? t('已跳过') : t(labels[item.status]) }}</span></div>
      <small v-if="item.error" class="detail-error">{{ item.error }}</small>
      <div v-for="part in item.parts" :key="`${part.task_id}-${part.kind}`" class="detail-part">

@@ -60,6 +60,9 @@ const ScanQueueCheckInterval = time.Second
 // SchedulerDiagnosticInterval 在调度被锁或存储阻塞时周期记录最后阶段。
 const SchedulerDiagnosticInterval = 30 * time.Second
 
+// TaskDetailsSlowThreshold 只记录缓慢的详情读取，避免每秒刷新产生重复日志。
+const TaskDetailsSlowThreshold = 500 * time.Millisecond
+
 // ScanLogInterval 控制扫描等待期间的可见进度频率。
 const ScanLogInterval = 5 * time.Second
 

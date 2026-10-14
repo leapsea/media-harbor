@@ -83,6 +83,6 @@ export interface TaskDetails { platform: string; items: DetailContent[] }
 /** 配置存在、Cookie可用和平台能否运行分别展示。 */
 export interface CookieStatus { configured: boolean; usable: boolean; platform_enabled: boolean; state: string; reason?: string; revision: number; disabled_at?: string }
 
-/** A 保存配置；B 保存整帖期望清单；C 保存资源与附属项的实际下载状态。 */
+/** 订阅配置保存平台、地址和下载选项；帖子任务保存整帖期望清单；下载资源任务保存资源与附属项的实际下载状态。 */
 export interface PostTask { id: number; subscription_id: number; remote_id: string; url: string; title: string; status: string; kinds: string[]; manifest_complete: boolean; expected: number; completed: number; error?: string; updated_at: string }
 export interface DownloadItem { id: number; post_id: number; content_id: number; required: boolean; kind: string; status: string; outcome?: string; error?: string; paths: string[]; updated_at: string }

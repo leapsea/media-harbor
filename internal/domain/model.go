@@ -58,7 +58,7 @@ type ContentFile struct {
 
 // Content 是下载去重的最小单元；Instagram 轮播的每张媒体具有独立 ID。
 type Content struct {
-	PostID         int64         `json:"post_id,omitempty"` // B 层归属，原内容 ID 继续对应文件索引。
+	PostID         int64         `json:"post_id,omitempty"` // 所属帖子任务，原内容 ID 继续对应文件索引。
 	ExpectedAssets int           `json:"expected_assets"`   // SDK 提供的整帖资源总数，0 表示未知。
 	SourceTaskID   int64         `json:"-"`                 // 本次扫描来源只用于关联下载批次，不进入内容索引。
 	ChannelID      string        `json:"channel_id,omitempty"`
@@ -270,7 +270,7 @@ type DownloadHistoryRepository interface {
 
 // Repository 隔离持久化；不采用数据库外键或触发器。
 type Repository interface {
-	PostDownloadRows(int64, int) ([]PostDownloadRow, error)
+	PostDownloadRows(context.Context, int64, int) ([]PostDownloadRow, error)
 	Posts(int64) ([]PostTask, error)
 	Post(int64, string) (PostTask, error)
 	DownloadItems(int64) ([]DownloadItem, error)

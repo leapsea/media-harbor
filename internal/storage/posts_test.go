@@ -8,7 +8,7 @@ import (
 )
 
 // postStore 装配真实 SQLite，测试期望清单与事务聚合而非重复实现聚合算法。
-func postStore(t *testing.T, platform string) (*Store, domain.Subscription) {
+func postStore(t testing.TB, platform string) (*Store, domain.Subscription) {
 	t.Helper()
 	s, err := Open(filepath.Join(t.TempDir(), "media.db"), config.Defaults())
 	if err != nil {
@@ -22,7 +22,7 @@ func postStore(t *testing.T, platform string) (*Store, domain.Subscription) {
 	return s, sub
 }
 
-// 三个资源只写入两个时，即使两个都完成，B 也必须保持未完成。
+// 三个资源只写入两个时，即使两个都完成，帖子任务也必须保持未完成。
 func TestPostManifestRequiresEveryExpectedResource(t *testing.T) {
 	s, sub := postStore(t, "instagram")
 	for num := 1; num <= 2; num++ {
@@ -63,7 +63,7 @@ func TestPostManifestRequiresEveryExpectedResource(t *testing.T) {
 	if len(resources) != 3 {
 		t.Fatal(resources)
 	}
-	// 重复发现不创建第二个 B/C，也不撤销已完成的子资源。
+	// 重复发现不创建第二个帖子任务与下载资源任务，也不撤销已完成的子资源。
 	if _, err = s.RegisterPost(sub.ID, "instagram", domain.Content{RemoteID: "pk-1", URL: p.URL, Asset: 1, ExpectedAssets: 3}, domain.YouTubeOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestVideoChildrenSurviveFailureCancelAndRetry(t *testing.T) {
 	_ = s.SaveTask(&task)
 	p, _ = s.Post(sub.ID, "video")
 	if p.Status == "completed" {
-		t.Fatal("文件归位前不能完成 B", p)
+		t.Fatal("文件归位前不能完成帖子任务", p)
 	}
 	task.Status = "completed"
 	_ = s.SaveTask(&task)

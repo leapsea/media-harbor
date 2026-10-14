@@ -11,10 +11,12 @@ import { createRequestPool } from '../utils/requestPool'
 /**
  * 同源请求只在这里处理错误，组件不重复实现数据读取逻辑。
  */
-export async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+export async function api<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
  const response = await fetch(`/api${path}`, {
   method, headers: { 'Content-Type': 'application/json' },
   body: body === undefined ? undefined : JSON.stringify(body),
+  /** 面板生命周期可以取消未完成请求，不影响普通页面与写操作。 */
+  signal,
  })
  const data = await response.json()
  if (!response.ok) throw new Error(data.error || '请求失败')

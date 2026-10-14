@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"media-harbor/internal/domain"
 	"media-harbor/internal/engine"
@@ -65,10 +66,10 @@ func TestYouTubeTaskDetails(t *testing.T) {
 	content.Paths = []string{video, meta}
 	_ = a.Repo.SaveContent(&content)
 	task.Status = "completed"
-	// C 明确区分下载完成与平台无可用字幕/音频；详情不再通过文件缺失猜测状态。
+	// 下载资源任务明确区分下载完成与平台无可用字幕/音频；详情不再通过文件缺失猜测状态。
 	task.Progress = []domain.TransferProgress{{Kind: "video", Status: "completed", BytesTotal: 6 * 1024 * 1024, BytesDone: 6 * 1024 * 1024}, {Kind: "metadata", Status: "completed"}, {Kind: "subtitles", Status: "skipped"}, {Kind: "audio", Status: "skipped"}}
 	_ = a.Repo.SaveTask(&task)
-	detail, err := a.TaskDetails(s.ID)
+	detail, err := a.TaskDetails(context.Background(), s.ID)
 	if err != nil || len(detail.Items) != 1 {
 		t.Fatalf("%+v %v", detail, err)
 	}
@@ -91,7 +92,7 @@ func TestInstagramTaskDetails(t *testing.T) {
 	tasks[1].Status = "running"
 	tasks[1].Progress = []domain.TransferProgress{{Kind: "media", Status: "running", BytesTotal: 8 * 1024 * 1024, Percent: 40}}
 	_ = a.Repo.SaveTask(&tasks[1])
-	detail, err := a.TaskDetails(s.ID)
+	detail, err := a.TaskDetails(context.Background(), s.ID)
 	if err != nil || len(detail.Items) != 1 {
 		t.Fatalf("%+v %v", detail, err)
 	}
@@ -114,7 +115,7 @@ func TestTaskDetailsUsesScopedJoinedRows(t *testing.T) {
 	if err := a.SaveSettings(settings); err != nil {
 		t.Fatal(err)
 	}
-	detail, err := a.TaskDetails(sub.ID)
+	detail, err := a.TaskDetails(context.Background(), sub.ID)
 	if err != nil || len(detail.Items) != 1 || detail.Items[0].Key != "first" {
 		t.Fatalf("detail=%+v err=%v", detail, err)
 	}
@@ -145,7 +146,7 @@ func TestTaskDetailsExecutionOrder(t *testing.T) {
 		}
 		_ = a.Repo.SaveTask(&task)
 	}
-	detail, err := a.TaskDetails(s.ID)
+	detail, err := a.TaskDetails(context.Background(), s.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

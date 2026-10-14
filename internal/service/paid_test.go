@@ -186,7 +186,7 @@ func TestResolvedPaidSkip(t *testing.T) {
 	if _, err := os.Stat(a.WorkPath(tasks[0])); !os.IsNotExist(err) {
 		t.Fatal("metadata-only skip left work directory")
 	}
-	detail, err := a.TaskDetails(s.ID)
+	detail, err := a.TaskDetails(context.Background(), s.ID)
 	if err != nil || detail.Items[0].Status != "skipped" || detail.Items[0].Error == "" || detail.Items[0].Parts[0].Status != "skipped" {
 		t.Fatalf("%+v %v", detail, err)
 	}

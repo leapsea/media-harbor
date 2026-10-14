@@ -54,7 +54,7 @@ WHERE subscription_id=? AND status IN ('queued','running') RETURNING id,content_
 	if closeErr != nil {
 		return nil, closeErr
 	}
-	// 取消同批 C 层资源，再聚合 B；已完成的资源保留完成状态。
+	// 取消同批下载资源任务，再聚合帖子任务；已完成的资源保留完成状态。
 	for cid := range contents {
 		if err = s.syncResources(tx, cid, "cancelled", nil, nil, ""); err != nil {
 			return nil, err

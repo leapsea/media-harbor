@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// PostTask 是 B 层；清单完整且所有期望的 C 层资源完成后才标记完成。
+// PostTask 是帖子任务；清单完整且所有期望的下载资源任务完成后才标记完成。
 // 生产者尚未确认资源总数时保持清单待确认，不凭已发现条目判定完成。
 type PostTask struct {
 	ID               int64     `json:"id"`
@@ -25,7 +25,7 @@ type PostTask struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
-// DownloadItem 是 C 层；一个轮播资源或视频的一个可选产物拥有独立持久状态。
+// DownloadItem 是下载资源任务；一个轮播资源或视频的一个可选产物拥有独立持久状态。
 // ContentID 关联资源文件集合及其执行记录，下载路径由该集合管理。
 type DownloadItem struct {
 	ID        int64            `json:"id"`
@@ -41,7 +41,7 @@ type DownloadItem struct {
 	UpdatedAt time.Time        `json:"updated_at"`
 }
 
-// PostIdentity 统一 URL 的短码/视频 ID，不让轮播序号、追踪参数或 URL 别名拆散 B。
+// PostIdentity 统一 URL 的短码/视频 ID，不让轮播序号、追踪参数或 URL 别名拆散帖子任务。
 func PostIdentity(platform string, item Content) string {
 	u, err := url.Parse(item.URL)
 	if err == nil {
@@ -97,7 +97,7 @@ func ExpectedKinds(platform string, o YouTubeOptions) []string {
 	return kinds
 }
 
-// PostGate 由应用服务核对 B，SDK 只报告原始帖子身份并执行返回的 continue/skip/stop。
+// PostGate 由应用服务核对帖子任务，SDK 只报告原始帖子身份并执行返回的 continue/skip/stop。
 type PostCandidate struct {
 	RemoteID string
 	URL      string
@@ -115,11 +115,13 @@ func GatePost(ctx context.Context, post PostCandidate) (string, error) {
 	return "continue", nil
 }
 
-// PostScanner 声明扫描器在资源解析前支持 B 层核对。
+// PostScanner 声明扫描器在资源解析前支持帖子任务核对。
 type PostScanner interface{ SupportsPostTasks() bool }
 
-// PostDownloadRow 是任务详情唯一的数据源，B/C 为主体，执行账本只提供操作与排序信息。
+// PostDownloadRow 是任务详情唯一的数据源，帖子任务与下载资源任务为主体，执行账本只提供操作与排序信息。
 type PostDownloadRow struct {
+	// 详情投影保留完整帖子任务与下载资源任务；Content/Task 只携带媒体类型、操作 ID 与执行时间。
+	// 文件集合和日志由各自页面读取，不为每个下载资源任务重复反序列化。
 	Post     PostTask
 	Download DownloadItem
 	Content  Content
