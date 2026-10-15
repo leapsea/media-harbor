@@ -19,6 +19,11 @@ func TestRestartResumesTasks(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			a := testApp(t, fakeEngine{block: true})
 			sub := addSub(t, a, "restart", "youtube")
+			// 多阶段视频的附属项在重新认领时仍待执行，不能残留上次停止说明。
+			sub.YouTube = &domain.YouTubeOptions{Video: true, Comments: true, Subtitles: true}
+			if err := a.Repo.SaveSubscription(&sub); err != nil {
+				t.Fatal(err)
+			}
 			scan, err := a.QueueScan(sub.ID, "full")
 			if err != nil {
 				t.Fatal(err)
@@ -85,6 +90,16 @@ func TestRestartResumesTasks(t *testing.T) {
 				if first.Status == "running" && second.Status == "running" {
 					if first.Attempts != 2 || second.Attempts != 2 || first.Error != "" || second.Error != "" {
 						t.Fatal(first, second)
+					}
+					// 同时核对详情 API 投影，单查执行账本看不到附属项携带的旧提示。
+					details, err := resumed.TaskDetails(context.Background(), sub.ID)
+					if err != nil || len(details.Items) != 1 || details.Items[0].Error != "" {
+						t.Fatalf("恢复后的详情仍有停止提示：%+v，%v", details, err)
+					}
+					for _, part := range details.Items[0].Parts {
+						if part.Error != "" {
+							t.Fatalf("恢复后的附属项仍有停止提示：%+v", part)
+						}
 					}
 					break
 				}

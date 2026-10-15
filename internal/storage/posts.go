@@ -238,6 +238,13 @@ func (s *Store) syncResources(tx *sql.Tx, cid int64, status string, progress []d
 	}
 	posts := map[int64]bool{}
 	for _, d := range items {
+		// 重新认领时，尚未开始的附属项仍保持排队；上次停止的说明此时已经失效。
+		// 仅清理两种重启等待文案，真实失败原因与已经完成的资源保持原样。
+		if status == "running" && d.Status == "queued" && (d.Error == "服务停止，等待继续执行" || d.Error == "服务重启，等待继续执行") {
+			d.Error = ""
+			d.Progress.Error = ""
+		}
+		// 历史资产：认领只清空执行账本的 Error，排队附属项的停止说明会再次汇总到父任务。
 		if paths != nil {
 			d.Paths = paths
 			if d.Kind != "media" {

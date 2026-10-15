@@ -135,3 +135,59 @@ func TestVideoChildrenSurviveFailureCancelAndRetry(t *testing.T) {
 		t.Fatal(p)
 	}
 }
+
+// 恢复执行只清理停止说明，已完成的视频、待执行项的顺序及真实失败仍可追溯。
+func TestResumedResourcesClearOnlyRestartWait(t *testing.T) {
+	for _, reason := range []string{"服务停止，等待继续执行", "服务重启，等待继续执行"} {
+		t.Run(reason, func(t *testing.T) {
+			s, sub := postStore(t, "youtube")
+			sub.YouTube = &domain.YouTubeOptions{Video: true, Comments: true, Subtitles: true}
+			if err := s.SaveSubscription(&sub); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.AddContentAndTask(sub.ID, domain.Content{RemoteID: "resume"}); err != nil {
+				t.Fatal(err)
+			}
+			tasks, _ := s.SubscriptionTasks(sub.ID)
+			task := tasks[0]
+			task.Status, task.Error = "queued", reason
+			task.Progress = []domain.TransferProgress{{Kind: "video", Status: "completed", BytesTotal: 1024, BytesDone: 1024, Percent: 100}}
+			if err := s.SaveTask(&task); err != nil {
+				t.Fatal(err)
+			}
+			// 同一视频的另一附属项包含真实错误，不能被重启文案的清理规则抹掉。
+			post, _ := s.Post(sub.ID, "resume")
+			if _, err := s.db.Exec(`UPDATE download_items SET payload=json_set(payload,'$.error','HTTP 403: Forbidden') WHERE post_id=? AND kind='subtitles'`, post.ID); err != nil {
+				t.Fatal(err)
+			}
+			task.Status, task.Error, task.Progress = "running", "", nil
+			if err := s.SaveTask(&task); err != nil {
+				t.Fatal(err)
+			}
+			parts, err := s.DownloadItems(post.ID)
+			if err != nil || len(parts) != 3 {
+				t.Fatal(parts, err)
+			}
+			for _, part := range parts {
+				switch part.Kind {
+				case "video":
+					if part.Status != "completed" || part.Progress.BytesDone != 1024 {
+						t.Fatal("已完成的视频被重置", part)
+					}
+				case "comments":
+					if part.Status != "queued" || part.Error != "" || part.Progress.Error != "" {
+						t.Fatal("评论应保持待执行且清除停止说明", part)
+					}
+				case "subtitles":
+					if part.Status != "queued" || part.Error != "HTTP 403: Forbidden" {
+						t.Fatal("真实失败原因被清理", part)
+					}
+				}
+			}
+			post, _ = s.Post(sub.ID, "resume")
+			if post.Status != "running" || post.Error != "HTTP 403: Forbidden" || post.Completed != 1 {
+				t.Fatal("父任务应保留真实错误与完成计数", post)
+			}
+		})
+	}
+}
