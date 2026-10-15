@@ -14,6 +14,15 @@ func TestInitialSettings(t *testing.T) {
 	if settings.YouTube.AudioFormat != "best" || settings.YouTube.AudioQuality != "0" || settings.YouTube.Fragments != 6 {
 		t.Fatalf("youtube=%+v", settings.YouTube)
 	}
+	// 评论分页的主要成本是请求间隔；缩短间隔仍保持原有每分钟20次预算。
+	youtube := settings.Pipeline.YouTube
+	if youtube.WindowSeconds != 60 || youtube.MaxRequests != 20 || youtube.MinIntervalSeconds != 3 || youtube.CooldownSeconds != 180 {
+		t.Fatalf("youtube pipeline=%+v", youtube)
+	}
+	// 初始化的均匀请求节奏应与窗口上限相容，避免预算和间隔相互抵消。
+	if youtube.MinIntervalSeconds*float64(youtube.MaxRequests) != float64(youtube.WindowSeconds) {
+		t.Fatalf("YouTube请求间隔与窗口预算不一致：%+v", youtube)
+	}
 }
 
 // TestSavedDefaults 初始化恢复用户当前已确认的字幕、音频、缩略图和元数据选项。
