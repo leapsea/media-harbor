@@ -138,7 +138,7 @@ function dryRun() {
     </div>
     <template v-if="form.platform === 'youtube'">
      <label class="check"><input v-model="override" type="checkbox">{{ t("自定义 YouTube 下载选项") }}</label>
-     <YouTubeOptions v-if="override" v-model="options" />
+     <YouTubeOptions v-if="override" v-model="options" :defaults="settings.youtube" />
     </template>
     </details>
     <footer class="form-actions"><button type="button" @click="emit('close')">{{ t("取消") }}</button><button v-if="!form.id" type="button" :disabled="store.busy || nameLoading || dryrun.running.value || !form.url.trim()" @click="dryRun">{{ dryrun.running.value ? t('验证中…') : 'Dryrun' }}</button><button class="primary" :disabled="store.busy || nameLoading || dryrun.running.value">{{ nameLoading ? t("正在解析作者…") : store.busy ? t("正在保存…") : t("保存任务") }}</button></footer>

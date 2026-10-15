@@ -4,7 +4,7 @@ import type { YouTubeOptions } from '../types'
 /**
  * 表单值由父组件持有；以新对象向上提交修改。
  */
-const props = defineProps<{ modelValue: YouTubeOptions }>()
+const props = defineProps<{ modelValue: YouTubeOptions; defaults?: YouTubeOptions }>()
 const emit = defineEmits<{ 'update:modelValue': [value: YouTubeOptions] }>()
 const toggles: { key: keyof YouTubeOptions; label: string }[] = [
  { key: 'video', label: '下载视频' }, { key: 'subtitles', label: '人工字幕' },
@@ -41,6 +41,9 @@ function checked(event: Event) { return (event.target as HTMLInputElement).check
  <div class="form-grid">
   <label>{{ t("视频画质") }}<select :value="modelValue.format" @change="set('format', value($event))"><option v-for="format in formats" :key="format.value" :value="format.value">{{ t(format.label) }}</option><option v-if="!knownFormat(modelValue.format)" :value="modelValue.format">{{ t("自定义（已有配置）") }}</option></select></label>
   <label>{{ t("字幕语言") }}<input :value="modelValue.subtitle_languages" @input="set('subtitle_languages', value($event))"></label>
+  <!-- 旧订阅缺省时回显系统值，数量包含回复，达到上限即停止分页。 -->
+  <label v-if="modelValue.comments">{{ t('最新评论数量（含回复）') }}<input type="number" min="1" step="1" required :value="modelValue.comment_limit || defaults?.comment_limit || 100" @input="set('comment_limit', Number(value($event)))"></label>
+  <label v-if="modelValue.comments">{{ t('评论超时（秒）') }}<input type="number" min="1" step="1" required :value="modelValue.comment_timeout_seconds || defaults?.comment_timeout_seconds || 180" @input="set('comment_timeout_seconds', Number(value($event)))"></label>
   <!-- 格式与码率仅控制本地提取，额外下载音频始终保留最佳源音轨。 -->
   <label v-if="modelValue.extract_audio">{{ t("本地提取格式") }}<select :value="modelValue.audio_format" @change="set('audio_format', value($event))"><option value="best">{{ t("原始格式（不转码）") }}</option><option>mp3</option><option>m4a</option><option>flac</option></select></label>
   <label v-if="modelValue.extract_audio && modelValue.audio_format !== 'best'">{{ t("转码音频质量") }}<select :value="modelValue.audio_quality" @change="set('audio_quality', value($event))"><option value="0">{{ t("最高") }}</option><option value="320K">320 kbps</option><option value="256K">256 kbps</option><option value="192K">192 kbps</option><option value="128K">128 kbps</option></select></label>

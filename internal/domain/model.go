@@ -12,19 +12,29 @@ import (
 // YouTubeOptions 可用于全局默认值或订阅级整体覆盖。
 // AudioFormat 与 AudioQuality 只控制本地提取；best 复制源音轨，不重新编码。
 type YouTubeOptions struct {
-	Video             bool   `json:"video"`
-	Format            string `json:"format"`
-	Subtitles         bool   `json:"subtitles"`
-	AutoSubtitles     bool   `json:"auto_subtitles"`
-	SubtitleLanguages string `json:"subtitle_languages"`
-	Comments          bool   `json:"comments"`
-	ExtraAudio        bool   `json:"extra_audio"`
-	ExtractAudio      bool   `json:"extract_audio"`
-	AudioFormat       string `json:"audio_format"`
-	AudioQuality      string `json:"audio_quality"`
-	Thumbnail         bool   `json:"thumbnail"`
-	Metadata          bool   `json:"metadata"`
-	Fragments         int    `json:"fragments"`
+	Video                 bool   `json:"video"`
+	Format                string `json:"format"`
+	Subtitles             bool   `json:"subtitles"`
+	AutoSubtitles         bool   `json:"auto_subtitles"`
+	SubtitleLanguages     string `json:"subtitle_languages"`
+	Comments              bool   `json:"comments"`
+	CommentLimit          int    `json:"comment_limit"`
+	CommentTimeoutSeconds int    `json:"comment_timeout_seconds"`
+	ExtraAudio            bool   `json:"extra_audio"`
+	ExtractAudio          bool   `json:"extract_audio"`
+	AudioFormat           string `json:"audio_format"`
+	AudioQuality          string `json:"audio_quality"`
+	Thumbnail             bool   `json:"thumbnail"`
+	Metadata              bool   `json:"metadata"`
+	Fragments             int    `json:"fragments"`
+}
+
+// ValidateComments 允许旧订阅的零值继承系统配置，拒绝无效数量及溢出的计时时长。
+func (o YouTubeOptions) ValidateComments() error {
+	if o.CommentLimit < 0 || o.CommentTimeoutSeconds < 0 || o.CommentTimeoutSeconds > int((time.Duration(1<<63-1))/time.Second) {
+		return errors.New("评论数量与超时时间必须为正整数")
+	}
+	return nil
 }
 
 // Subscription 的 DisplayName 固定，CurrentName 在扫描时更新。
@@ -202,6 +212,21 @@ type Settings struct {
 	Debug               DebugSettings         `json:"debug"`
 	Pipeline            PipelineSettings      `json:"pipeline"`
 	Sleep               PlatformSleepSettings `json:"sleep"`
+}
+
+// YouTubeOptionsFor 保持订阅整体覆盖；新增评论字段缺省时继承系统值，兼容已有订阅。
+func (s Settings) YouTubeOptionsFor(sub Subscription) YouTubeOptions {
+	if sub.YouTube == nil {
+		return s.YouTube
+	}
+	o := *sub.YouTube
+	if o.CommentLimit == 0 {
+		o.CommentLimit = s.YouTube.CommentLimit
+	}
+	if o.CommentTimeoutSeconds == 0 {
+		o.CommentTimeoutSeconds = s.YouTube.CommentTimeoutSeconds
+	}
+	return o
 }
 
 // ConfigurableEngine 在保存设置后更新共享调度器，不重启任务或复制 Cookie。

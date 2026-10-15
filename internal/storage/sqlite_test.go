@@ -129,6 +129,32 @@ func TestSettingsPersistence(t *testing.T) {
 	}
 }
 
+// 旧设置与旧订阅新增字段缺省时使用有界评论配置，其他已保存值不被初始化覆盖。
+func TestLegacyCommentSettingsDefaults(t *testing.T) {
+	s, sub := postStore(t, "youtube")
+	settings, _ := s.Settings()
+	settings.YouTube.CommentLimit, settings.YouTube.CommentTimeoutSeconds = 0, 0
+	settings.YouTubeConcurrent = 7
+	if err := s.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	read, err := s.Settings()
+	if err != nil || read.YouTubeConcurrent != 7 || read.YouTube.CommentLimit != 100 || read.YouTube.CommentTimeoutSeconds != 180 {
+		t.Fatal(read, err)
+	}
+	sub.YouTube = &domain.YouTubeOptions{Video: false, Comments: true}
+	read.YouTube.CommentLimit, read.YouTube.CommentTimeoutSeconds = 250, 120
+	o := read.YouTubeOptionsFor(sub)
+	if o.Video || o.CommentLimit != 250 || o.CommentTimeoutSeconds != 120 {
+		t.Fatal(o)
+	}
+	sub.YouTube.CommentLimit, sub.YouTube.CommentTimeoutSeconds = 35, 60
+	o = read.YouTubeOptionsFor(sub)
+	if o.CommentLimit != 35 || o.CommentTimeoutSeconds != 60 {
+		t.Fatal(o)
+	}
+}
+
 // TestContentAndProfileIdentity 同一作者的多个帖子与主页可共存，重复主页仍拒绝。
 func TestContentAndProfileIdentity(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "media.db"), config.Defaults())

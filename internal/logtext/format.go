@@ -26,7 +26,7 @@ func Duration(d time.Duration) string {
 
 // Stage 只翻译已知执行阶段；未知阶段原样保留，避免丢失诊断上下文。
 func Stage(stage string) string {
-	if label, ok := map[string]string{"scan": "采集解析", "metadata": "视频信息解析", "media": "媒体下载", "avatar": "头像下载", "author": "作者识别", "author-page": "作者网页", "dryrun": "试运行"}[stage]; ok {
+	if label, ok := map[string]string{"scan": "采集解析", "metadata": "视频信息解析", "comments": "评论抓取", "media": "媒体下载", "avatar": "头像下载", "author": "作者识别", "author-page": "作者网页", "dryrun": "试运行"}[stage]; ok {
 		return label
 	}
 	return stage

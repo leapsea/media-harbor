@@ -21,6 +21,8 @@
     "auto_subtitles": true,
     "subtitle_languages": "zh.*,en",
     "comments": true,
+    "comment_limit": 100,
+    "comment_timeout_seconds": 180,
     "extra_audio": true,
     "extract_audio": false,
     "audio_format": "best",

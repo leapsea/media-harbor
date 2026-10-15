@@ -8,6 +8,9 @@ func TestInitialSettings(t *testing.T) {
 		t.Setenv(key, "")
 	}
 	settings := Defaults()
+	if settings.YouTube.CommentLimit != YouTubeCommentLimit || settings.YouTube.CommentTimeoutSeconds != YouTubeCommentTimeoutSeconds {
+		t.Fatalf("评论初始化配置与缺省值不一致：%+v", settings.YouTube)
+	}
 	if !settings.UseUploadDate || settings.YouTubeConcurrent != 3 || settings.InstagramConcurrent != 6 || settings.Template != "{platform}/{directory_name}/{year}/{month}{day}/{filename}" {
 		t.Fatalf("settings=%+v", settings)
 	}

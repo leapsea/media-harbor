@@ -20,6 +20,7 @@ type requestTiming struct {
 type requestLogStats struct {
 	count, success, failed, redirected int
 	waited, response                   time.Duration
+	comments, commentLimit             int
 }
 
 func (s requestLogStats) message(platform, stage, media string, unfinished int) string {
@@ -32,6 +33,9 @@ func (s requestLogStats) message(platform, stage, media string, unfinished int) 
 	}
 	if unfinished > 0 {
 		message += fmt.Sprintf(" · 未收到响应 %d 次", unfinished)
+	}
+	if stage == "comments" {
+		message += fmt.Sprintf(" · 已采集评论 %d/%d 条", s.comments, s.commentLimit)
 	}
 	return message
 }

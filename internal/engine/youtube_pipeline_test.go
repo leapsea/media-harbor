@@ -3,12 +3,14 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"media-harbor/internal/domain"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestYouTubeChildren 用实际子进程记录父子执行顺序，附属失败不会阻止其余附属项。
@@ -217,5 +219,39 @@ func TestYouTubeHasMediaFormats(t *testing.T) {
 		if youtubeHasMediaFormats([]byte(raw)) != want {
 			t.Fatal(raw)
 		}
+	}
+}
+
+// 评论超时仅终止该 SDK，后续字幕和音频仍执行；主上下文不能被当作服务停止。
+func TestYouTubeCommentTimeoutContinuesAttachments(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("未安装 Python")
+	}
+	root := t.TempDir()
+	trace, _ := json.Marshal(filepath.Join(root, "trace"))
+	script := "#!" + python + "\n" + `import sys,json,pathlib,time
+a=sys.argv[1:]
+phase='comments' if '--write-comments' in a else 'parse' if '--dump-single-json' in a else 'subtitle' if '--write-subs' in a else 'audio' if '-x' in a else 'video'
+with open(` + string(trace) + `,'a') as f:f.write(phase+'\n')
+if phase=='comments':
+ params=a[a.index('--extractor-args')+1]
+ assert 'max_comments=42' in params and 'comment_sort=new' in params,params
+ time.sleep(30)
+if phase=='parse':print(json.dumps({'id':'id','title':'fixture','subtitles':{'en':[{}]}}))
+`
+	if err := os.WriteFile(filepath.Join(root, "yt-dlp"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx := context.Background()
+	started := time.Now()
+	err = (CLI{DataDir: root}).Download(ctx, domain.Subscription{Platform: "youtube"}, domain.Content{URL: "https://example.test/video"}, domain.YouTubeOptions{Video: true, Format: "best", Comments: true, CommentLimit: 42, CommentTimeoutSeconds: 1, Subtitles: true, SubtitleLanguages: "en", ExtraAudio: true}, filepath.Join(root, "work"), func(string) {})
+	if !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil || time.Since(started) > 5*time.Second {
+		t.Fatal(err, time.Since(started))
+	}
+	raw, _ := os.ReadFile(filepath.Join(root, "trace"))
+	if string(raw) != "parse\nvideo\ncomments\nsubtitle\naudio\n" {
+		t.Fatal(string(raw))
 	}
 }

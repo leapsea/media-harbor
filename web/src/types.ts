@@ -4,6 +4,8 @@
 export interface YouTubeOptions {
  video: boolean; format: string; subtitles: boolean; auto_subtitles: boolean
  subtitle_languages: string; comments: boolean
+ /** 旧订阅缺省时继承系统评论上限，新保存配置可记录明确值。 */
+ comment_limit?: number; comment_timeout_seconds?: number
  extra_audio: boolean; extract_audio: boolean; audio_format: string; audio_quality: string
  thumbnail: boolean; metadata: boolean; fragments: number
 }

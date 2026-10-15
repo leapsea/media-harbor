@@ -84,6 +84,11 @@ func NextRun(schedule string, now time.Time) (time.Time, error) {
 func (a *App) SaveSubscription(s *domain.Subscription) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if s.YouTube != nil {
+		if err := s.YouTube.ValidateComments(); err != nil {
+			return err
+		}
+	}
 	u, e := url.Parse(strings.TrimSpace(s.URL))
 	if e != nil || u.Host == "" {
 		return fmt.Errorf("请输入有效任务 URL")
@@ -316,6 +321,10 @@ func (a *App) Settings() (domain.Settings, error) {
 func (a *App) SaveSettings(s domain.Settings) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if err := s.YouTube.ValidateComments(); err != nil {
+		return err
+	}
+	s.YouTube = config.CommentDefaults(s.YouTube)
 	if s.YouTubeConcurrent < 1 || s.InstagramConcurrent < 1 {
 		return fmt.Errorf("并发数量至少为 1")
 	}
@@ -859,10 +868,7 @@ func (a *App) execute(ctx context.Context, t domain.Task, s domain.Subscription,
 		return
 	}
 	// 订阅选项为整体覆盖，空值沿用全局默认。
-	options := settings.YouTube
-	if s.YouTube != nil {
-		options = *s.YouTube
-	}
+	options := settings.YouTubeOptionsFor(s)
 	if _, planErr := a.registerPost(ctx, s.ID, s.Platform, c, options); planErr != nil {
 		a.finish(t, planErr)
 		return

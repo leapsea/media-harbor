@@ -39,16 +39,18 @@ type instagramRequests struct {
 
 // 每次引擎执行独立关联取消上下文和日志，不让其他任务继承 Cookie 或签名地址。
 type instagramOperation struct {
-	revision   int64
-	usesCookie bool
-	ctx        context.Context
-	cancel     context.CancelFunc
-	log        func(string)
-	stage      string
-	mediaID    string
-	leases     map[string]func()
-	timings    map[string]requestTiming
-	stats      requestLogStats
+	revision            int64
+	usesCookie          bool
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	log                 func(string)
+	stage               string
+	mediaID             string
+	leases              map[string]func()
+	timings             map[string]requestTiming
+	stats               requestLogStats
+	lastCommentReport   int
+	lastCommentReportAt time.Time
 }
 
 // instagramRoundTripper 使 Go 的公开作者网页请求与 SDK 使用同一个平台许可。
@@ -308,6 +310,26 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	switch event.Kind {
+	case "comment-progress":
+		// SDK 只上报原始条目事件，数量累计和日志频率由本次 Go 操作维护。
+		if op.stage != "comments" {
+			http.Error(w, "当前阶段不是评论抓取", 400)
+			return
+		}
+		r.mu.Lock()
+		op.stats.comments += int(event.Offset)
+		op.stats.commentLimit = int(event.Total)
+		count, limit := op.stats.comments, op.stats.commentLimit
+		report := op.lastCommentReportAt.IsZero() || count-op.lastCommentReport >= config.CommentProgressBatch ||
+			(count > op.lastCommentReport && (time.Since(op.lastCommentReportAt) >= config.RequestWaitLogInterval || count == limit))
+		if report {
+			op.lastCommentReport, op.lastCommentReportAt = count, time.Now()
+		}
+		r.mu.Unlock()
+		if report {
+			op.log(fmt.Sprintf("[评论进度] %s · 媒体 %s · 按最新排序 · 已采集 %d/%d 条", r.platform, op.mediaID, count, limit))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	case "acquire":
 		if r.cookies != nil && r.cookies.Active() && op.usesCookie {
 			status, err := r.cookies.Status(strings.ToLower(r.platform))

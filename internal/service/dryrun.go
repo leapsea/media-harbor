@@ -32,12 +32,10 @@ func (a *App) DryRun(ctx context.Context, sub domain.Subscription, log func(stri
 	if err != nil {
 		return err
 	}
-	options := settings.YouTube
+	options := settings.YouTubeOptionsFor(sub)
 	sub.RequestLanguage = settings.UI.Language
 	// 当前表单的覆盖选项优先，未勾选覆盖时使用已有系统设置快照。
-	if sub.YouTube != nil {
-		options = *sub.YouTube
-	}
+	// 评论字段缺省时由系统设置补齐，其余订阅覆盖语义保持一致。
 	limit := settings.Debug.TestItemLimit
 	// dryrun 本身是抽样请求验证，调试关闭后仍不枚举无限历史。
 	if limit <= 0 {

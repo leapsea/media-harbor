@@ -476,6 +476,7 @@ func youtubeArgs(o domain.YouTubeOptions, dir string) []string {
 
 	if o.Comments {
 		a = append(a, "--write-comments", "--write-info-json")
+		a = append(a, youtubeCommentExtractorArgs("", o)...)
 	}
 	if o.Metadata {
 		a = append(a, "--write-info-json")

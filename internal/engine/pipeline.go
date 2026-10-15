@@ -222,7 +222,7 @@ func (c CLI) youtubeMetadata(ctx context.Context, sub domain.Subscription, item 
 }
 
 func youtubeMetadataKey(sub domain.Subscription, item domain.Content, options domain.YouTubeOptions) string {
-	return sub.URL + "\x00" + item.URL + "\x00" + fmt.Sprint(options) + "\x00" + sub.RequestLanguage
+	return sub.URL + "\x00" + item.URL + "\x00" + fmt.Sprint(config.CommentDefaults(options)) + "\x00" + sub.RequestLanguage
 }
 
 // 失败只交付当前消费者一次；手动重试重新排入生产者，不能长期复用失败。

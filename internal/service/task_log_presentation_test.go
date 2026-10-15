@@ -58,6 +58,26 @@ func TestYouTubeRestrictedFormatWarnings(t *testing.T) {
 	}
 }
 
+// 同任务的倒计时即使数字和阶段变化也只出现一次，真实异常和采集数量仍输出。
+func TestTaskLogCoalescesRequestInterval(t *testing.T) {
+	p := newTaskLogPresentation(time.Now())
+	for i, raw := range []string{
+		"[请求等待] YouTube · 视频信息解析 · 请求间隔 · 约 2.8秒 后继续",
+		"[请求等待] YouTube · 视频信息解析 · 请求间隔 · 约 2.7秒 后继续",
+		"[请求等待] YouTube · 评论抓取 · 请求间隔 · 约 2.8秒 后继续",
+	} {
+		message := p.message(raw, time.Now())
+		if (message != "") != (i == 0) {
+			t.Fatal(i, message)
+		}
+	}
+	for _, raw := range []string{"[请求等待] YouTube · 评论抓取 · 平台 429 统一冷却 · 约 1分 后继续", "[评论进度] YouTube · 媒体 id · 已采集 10/100 条", "[评论进度] YouTube · 媒体 id · 已采集 20/100 条"} {
+		if p.message(raw, time.Now()) != raw {
+			t.Fatal(raw)
+		}
+	}
+}
+
 // 模拟等待日志持续到来，只有真正的静默才补充扫描进度，无需等待真实十五秒。
 func TestScanHeartbeatDoesNotRepeatRequestWait(t *testing.T) {
 	start := time.Now()

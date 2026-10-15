@@ -71,3 +71,36 @@ func TestRequestWaitLogDoesNotRepeatCountdown(t *testing.T) {
 		t.Fatal(logs)
 	}
 }
+
+// 评论事件独立计数，首次、每十条和达到上限时才展示，避免把分页等待误标为元数据。
+func TestCommentProgressReportsCountAndStage(t *testing.T) {
+	r := newInstagramRequests()
+	r.platform = "YouTube"
+	logs := []string{}
+	env, end, err := r.begin(withRequestLogMedia(context.Background(), "comment-video"), "comments", func(s string) { logs = append(logs, s) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := strings.TrimPrefix(env[1], "MEDIA_HARBOR_TOKEN=")
+	for i := 0; i <= 35; i++ {
+		delta := 1
+		if i == 0 {
+			delta = 0
+		}
+		req := httptest.NewRequest("POST", "/", strings.NewReader(fmt.Sprintf(`{"Kind":"comment-progress","Offset":%d,"Total":35}`, delta)))
+		req.Header.Set("X-Media-Harbor-Token", token)
+		w := httptest.NewRecorder()
+		r.handle(w, req)
+		if w.Code != 200 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+	end()
+	if len(logs) != 5 || !strings.Contains(logs[0], "已采集 0/35 条") || !strings.Contains(logs[4], "媒体 comment-video · 按最新排序 · 已采集 35/35 条") {
+		t.Fatal(logs)
+	}
+	summary := (requestLogStats{comments: 35, commentLimit: 35}).message("YouTube", "comments", "comment-video", 0)
+	if !strings.Contains(summary, "评论抓取 · 媒体 comment-video") || !strings.Contains(summary, "已采集评论 35/35 条") || strings.Contains(summary, "视频信息解析") {
+		t.Fatal(summary)
+	}
+}

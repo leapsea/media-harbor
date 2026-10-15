@@ -74,7 +74,11 @@ exec /app/server
         warning = "[引擎警告] YouTube 使用 zh-CN 翻译的元数据"
         assert sum(warning in line for line in scan_lines) == 1, scan_lines
         assert any("[警告汇总] 同一提示重复 6 次" in line for line in scan_lines), scan_lines
-        assert "[请求等待] YouTube · 视频信息解析 · 请求间隔" in log, log
+        assert "[请求等待] YouTube · 采集解析 · 请求间隔调度已启用" in log, log
+        waits = [line for line in log.splitlines() if "请求间隔调度已启用" in line]
+        task_ids = [line.split("[任务 #", 1)[1].split("]", 1)[0] for line in waits]
+        assert len(task_ids) == len(set(task_ids)), waits
+        assert not any(" · 请求间隔 · 约 " in line for line in log.splitlines()), log
         assert "[请求汇总] YouTube · 视频信息解析 · 媒体 new3" in log, log
         assert "[扫描汇总] 发现 3 / 新增 3" in log, log
         assert "[视频] new3" in log and "标题：new3" in log, log
@@ -83,6 +87,7 @@ exec /app/server
         report = {"completed_media": sum(bool(t["content_id"]) for t in tasks),
                   "scan_warning_lines": 1, "coalesced_warning_repeats": 6,
                   "request_summary": True, "request_interval_unchanged": 1.5,
+                  "interval_wait_once_per_task": True,
                   "task_log": str(RUN / "task.log")}
         (RUN / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
         print("PASS 日志可读性：" + json.dumps(report, ensure_ascii=False), flush=True)

@@ -110,10 +110,7 @@ func (a *App) reconcileScanLocked(subscriptionID int64, items []domain.Content, 
 			skipped++
 			continue
 		}
-		options := settings.YouTube
-		if sub.YouTube != nil {
-			options = *sub.YouTube
-		}
+		options := settings.YouTubeOptionsFor(sub)
 		// 补全不是权限重置；首次失败及跳过的付费条目保持原状态。
 		access := existing
 		if item.Availability != "" {

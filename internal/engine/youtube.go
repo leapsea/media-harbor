@@ -11,11 +11,13 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 // downloadYouTube 在一个视频名额内同步运行主任务和附属项，结束后才交还调度器。
 // 必要的格式解析不抓取评论，附属项共用解析文件，避免各自重新访问播放器接口。
 func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item domain.Content, options domain.YouTubeOptions, dir string, log func(string)) error {
+	options = config.CommentDefaults(options)
 	common := c.common(sub)
 	metadataPath := filepath.Join(dir, ".metadata.json")
 	metadataArgs := c.youtubeMetadataArgs(sub, options)
@@ -140,11 +142,15 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 			if !options.Comments {
 				return writeMetadata()
 			}
-			args := append(append([]string{}, metadataArgs...), "--write-info-json", "--force-overwrites", "-o", filepath.Join(dir, "%(title)s-%(id)s.%(ext)s"))
+			// dump-single-json 默认启用模拟模式；显式关闭模拟才能将评论实际写入文件。
+			// 仍保留 skip-download，不会重复下载主视频。
+			args := append(append([]string{}, metadataArgs...), "--no-simulate", "--write-info-json", "--force-overwrites", "-o", filepath.Join(dir, "%(title)s-%(id)s.%(ext)s"))
 			if options.Comments {
 				args = append(args, "--write-comments")
+				args = append(args, youtubeCommentExtractorArgs(sub.RequestLanguage, options)...)
 			}
-			updated, err := c.runYouTubeProducer(ctx, append(args, "--", item.URL), log, true)
+			log(fmt.Sprintf("评论抓取；媒体 %s；按最新排序；最多 %d 条（含回复）；执行超时 %d 秒（不含排队时间）", item.RemoteID, options.CommentLimit, options.CommentTimeoutSeconds))
+			updated, err := c.runYouTubeProducerTimeout(withRequestLogMedia(ctx, item.RemoteID), append(args, "--", item.URL), log, true, time.Duration(options.CommentTimeoutSeconds)*time.Second)
 			if err != nil {
 				return err
 			}
@@ -304,6 +310,17 @@ func (c CLI) youtubeMetadataArgs(sub domain.Subscription, options domain.YouTube
 // 视频存在性优先，随后比较分辨率和帧率；同分辨率的编码、音轨仍由引擎选择。
 func youtubeFormatArgs(format string) []string {
 	return []string{"-f", format, "--format-sort", config.YouTubeFormatSort, "--format-sort-force"}
+}
+
+// 评论排序与上限由 SDK 在分页中执行；重传完整参数以保留请求语言。
+// 不在下载全部评论后截断数组，也不禁用原有回复抓取。
+func youtubeCommentExtractorArgs(language string, options domain.YouTubeOptions) []string {
+	options = config.CommentDefaults(options)
+	value := fmt.Sprintf("youtube:comment_sort=new;max_comments=%d", options.CommentLimit)
+	if language != "" {
+		value += ";lang=" + language
+	}
+	return []string{"--extractor-args", value}
 }
 
 // youtubeHasMediaFormats 只判断音视频流是否存在，不将故事板当作可下载媒体。

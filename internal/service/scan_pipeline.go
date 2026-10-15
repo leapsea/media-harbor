@@ -40,10 +40,7 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 				return "", readErr
 			}
 			current.RequestLanguage = settings.UI.Language
-			options := settings.YouTube
-			if current.YouTube != nil {
-				options = *current.YouTube
-			}
+			options := settings.YouTubeOptionsFor(current)
 			key := domain.PostIdentity(current.Platform, domain.Content{RemoteID: candidate.RemoteID, URL: candidate.URL})
 			post, readErr := a.Repo.Post(sub.ID, key)
 			if errors.Is(readErr, sql.ErrNoRows) {
@@ -113,10 +110,7 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 				return readErr
 			}
 			current.RequestLanguage = settings.UI.Language
-			options := settings.YouTube
-			if current.YouTube != nil {
-				options = *current.YouTube
-			}
+			options := settings.YouTubeOptionsFor(current)
 			if postAware {
 				action, gateErr := domain.GatePost(ctx, domain.PostCandidate{RemoteID: item.RemoteID, URL: item.URL})
 				if gateErr != nil {
@@ -271,10 +265,7 @@ func (a *App) waitScanQueue(ctx context.Context, sid int64, item domain.Content,
 				if readErr != nil {
 					return readErr
 				}
-				options := settings.YouTube
-				if sub.YouTube != nil {
-					options = *sub.YouTube
-				}
+				options := settings.YouTubeOptionsFor(sub)
 				if !engine.NeedsSupplement(sub.Platform, known, options) {
 					// 只有补全读取已有产物；增量早停在上层生产回调完成。
 					return nil

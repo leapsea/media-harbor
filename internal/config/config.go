@@ -47,6 +47,24 @@ func seconds(key string, fallback time.Duration) time.Duration {
 // YouTubeMediaAttempts 在地址被拒绝或格式不可用后重新解析一次，不重复使用失效清单。
 const YouTubeMediaAttempts = 2
 
+// 评论上限和时限用于旧记录及直接引擎调用的缺省值，缺省字段不能回到无限抓取。
+const YouTubeCommentLimit = 100
+const YouTubeCommentTimeoutSeconds = 180
+
+// CommentProgressBatch 以新增条数推进日志；慢速采集也按既有等待报告间隔输出进展。
+const CommentProgressBatch = 10
+
+// CommentDefaults 只补齐新增字段，显式配置与其他下载选项保持原样。
+func CommentDefaults(o domain.YouTubeOptions) domain.YouTubeOptions {
+	if o.CommentLimit == 0 {
+		o.CommentLimit = YouTubeCommentLimit
+	}
+	if o.CommentTimeoutSeconds == 0 {
+		o.CommentTimeoutSeconds = YouTubeCommentTimeoutSeconds
+	}
+	return o
+}
+
 // YouTubeFormatSort 以视频存在性、分辨率、帧率为顺序，不让来源优先级压过尺寸。
 const YouTubeFormatSort = "hasvid,res,fps"
 

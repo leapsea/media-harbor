@@ -20,6 +20,7 @@ type taskLogPresentation struct {
 	mu                           sync.Mutex
 	lastActivity                 time.Time
 	warnings                     map[string]int
+	intervalWaitShown            bool
 	order                        []string
 	discovered, added, duplicate int
 }
@@ -28,11 +29,20 @@ func newTaskLogPresentation(at time.Time) *taskLogPresentation {
 	return &taskLogPresentation{lastActivity: at, warnings: map[string]int{}}
 }
 
-// message 只合并相同警告；未知警告和所有错误保持原文，首次提示始终显示。
+// message 合并常规请求等待及已知重复警告；未知警告和所有错误保持原文。
 func (p *taskLogPresentation) message(raw string, at time.Time) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.lastActivity = at
+	// 一次任务只报告一次常规请求间隔；变化的倒计时不产生新的诊断信息。
+	// 429 冷却、休眠、失败和实际采集进度继续保留，累计等待由阶段汇总给出。
+	if strings.HasPrefix(raw, "[请求等待]") && strings.Contains(raw, " · 请求间隔 · ") {
+		if p.intervalWaitShown {
+			return ""
+		}
+		p.intervalWaitShown = true
+		return strings.SplitN(raw, " · 请求间隔 · ", 2)[0] + " · 请求间隔调度已启用；同任务后续间隔等待不再逐条记录，累计耗时见阶段汇总"
+	}
 	if !strings.HasPrefix(raw, "WARNING:") {
 		return raw
 	}

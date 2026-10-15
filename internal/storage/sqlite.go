@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"media-harbor/internal/config"
 	"media-harbor/internal/domain"
 	_ "modernc.org/sqlite"
 	"time"
@@ -168,8 +169,11 @@ func (s *Store) Task(id int64) (domain.Task, error) {
 
 // 单用户设置只有一条持久记录。
 func (s *Store) Settings() (domain.Settings, error) {
-	// 只读取已保存的当前结构，不为缺失字段补入初始化参数。
-	return one[domain.Settings](s.db, "SELECT payload FROM app_settings WHERE id=?", 1)
+	settings, err := one[domain.Settings](s.db, "SELECT payload FROM app_settings WHERE id=?", 1)
+	// 仅为新增评论字段提供缺省值，不覆盖已有并发、休眠或下载偏好。
+	settings.YouTube = config.CommentDefaults(settings.YouTube)
+	// 历史资产：所有字段原样读取，新增评论字段的零值会成为无限抓取。
+	return settings, err
 }
 
 // 保存整体设置快照，不与启动环境默认值合并。

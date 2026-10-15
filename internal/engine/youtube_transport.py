@@ -7,6 +7,18 @@ from yt_dlp.networking.common import RequestDirector
 original_send = RequestDirector.send
 original_stdout = yt_dlp.YoutubeDL.to_stdout
 
+# 原始条目只在评论阶段上报；不读取评论内容，不改变 SDK 分页及数量限制。
+if os.environ.get("MEDIA_HARBOR_STAGE") == "comments":
+    from yt_dlp.extractor.youtube import YoutubeIE
+    original_comments = YoutubeIE._get_comments
+    def get_comments(self, *args, **kwargs):
+        limit = int(self._configuration_arg("max_comments", ["0"])[0])
+        control({"Kind": "comment-progress", "Total": limit, "Offset": 0})
+        for comment in original_comments(self, *args, **kwargs):
+            control({"Kind": "comment-progress", "Total": limit, "Offset": 1})
+            yield comment
+    YoutubeIE._get_comments = get_comments
+
 
 def send(self, request):
     lease = control({"Kind": "acquire", "Media": os.environ.get("MEDIA_HARBOR_STAGE") == "media"})["lease"]
