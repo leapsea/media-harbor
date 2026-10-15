@@ -19,6 +19,8 @@ const opener = document.activeElement as HTMLElement | null
 onMounted(() => closeButton.value?.focus())
 onUnmounted(() => opener?.focus())
 const labels: Record<string, string> = { queued: '待处理', running: '下载中', completed: '已完成', failed: '失败', cancelled: '已取消', skipped: '无需下载', blocked: '未执行' }
+/** 无需下载的附属项不占展示空间，父任务的完成计数仍使用真实任务清单。 */
+const visibleItems = computed(() => details.value.items.map(item => ({ ...item, parts: item.parts.filter(part => part.status !== 'skipped') })))
 const anchor = computed(() => detailAnchor(details.value.items))
 /** 只在执行位置或列表顺序变化时推进窗口，字节轮询不会打断手动查看历史。 */
 const windowKey = computed(() => `${anchor.value}|${details.value.items.map(item => item.key).join('|')}`)
@@ -45,8 +47,8 @@ watch(windowKey, async () => {
    <div class="section-top"><h2 id="task-details-title">{{ t('任务详情') }} · {{ task.display_name }}</h2><button ref="closeButton" class="icon-button" :aria-label="t('关闭')" @click="emit('close')">×</button></div>
    <div ref="body" class="detail-body" :aria-busy="loading">
     <p v-if="loading" class="empty">{{ t('加载中') }}</p>
-    <p v-else-if="!details.items.length" class="empty">{{ t('暂无下载任务') }}</p>
-    <article v-for="item in details.items" :key="item.key" class="detail-item" :data-content-key="item.key">
+    <p v-else-if="!visibleItems.length" class="empty">{{ t('暂无下载任务') }}</p>
+    <article v-for="item in visibleItems" :key="item.key" class="detail-item" :data-content-key="item.key">
      <!-- 父任务直到全部附属阶段结束才完成；媒体流的 100% 不替代父状态。 -->
      <div class="detail-heading"><span class="badge">{{ t('任务') }}</span><strong>{{ item.title }}</strong><!-- 完成状态与资源数量直接来自帖子任务，清单未知时不把可见下载资源任务数量当作总数。 -->
       <small class="detail-manifest">{{ item.manifest_complete ? `${item.completed}/${item.expected}` : t('清单待确认') }}</small><span class="badge" :class="item.status">{{ item.status === 'skipped' ? t('已跳过') : t(labels[item.status]) }}</span></div>
@@ -54,7 +56,8 @@ watch(windowKey, async () => {
      <div v-for="part in item.parts" :key="`${part.task_id}-${part.kind}`" class="detail-part">
       <!-- 小文件以五像素点表示状态，未知大小不填入估算百分比。 -->
       <div class="detail-part-top"><div class="detail-part-labels"><span v-for="label in part.labels" :key="label" class="badge">{{ t(label) }}{{ part.number ? ` ${part.number}` : '' }}</span></div><span class="detail-state" :class="part.status"><i v-if="part.bytes_total <= largeFileBytes" class="detail-dot" :style="{ width: `${statusDotPixels}px`, height: `${statusDotPixels}px` }" aria-hidden="true"></i>{{ item.status === 'skipped' && part.status === 'skipped' ? t('已跳过') : t(labels[part.status]) }}</span></div>
-      <div v-if="part.bytes_total > largeFileBytes" class="detail-transfer"><progress :class="part.status" :value="Math.min(100, Math.max(0, part.percent))" max="100" :aria-label="part.labels.map(label => t(label)).join(' / ')"></progress><small>{{ Math.floor(part.percent) }}% · {{ transferSize(part.bytes_done) }} / {{ transferSize(part.bytes_total) }}</small></div>
+      <!-- 父任务或该附属项完成后只保留结果状态，百分比与进度条一起收起。 -->
+      <div v-if="item.status !== 'completed' && part.status !== 'completed' && part.bytes_total > largeFileBytes" class="detail-transfer"><progress :class="part.status" :value="Math.min(100, Math.max(0, part.percent))" max="100" :aria-label="part.labels.map(label => t(label)).join(' / ')"></progress><small>{{ Math.floor(part.percent) }}% · {{ transferSize(part.bytes_done) }} / {{ transferSize(part.bytes_total) }}</small></div>
       <!-- 失败信息保留在对应附属项下方，避免重新混入全局日志刷屏。 -->
       <small v-if="part.error" class="detail-error">{{ part.error }}</small>
      </div>
@@ -80,7 +83,7 @@ watch(windowKey, async () => {
 .detail-part-top{display:flex;gap:8px;align-items:center;justify-content:space-between}.detail-part-labels{display:flex;gap:4px;flex-wrap:wrap}
 .detail-state{display:flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap;color:#627778}
 .detail-dot{display:inline-block;border-radius:50%;background:#388be0;flex:none}.completed .detail-dot{background:#24a47a}.failed .detail-dot{background:#d35d50}.cancelled .detail-dot,.skipped .detail-dot,.blocked .detail-dot{background:#97a4a7}
-/** 大文件独立显示真实百分比；完成前后保持行高，避免轮询时布局跳动。 */
+/** 未完成的大文件独立显示真实百分比，完成后收起传输行以节省空间。 */
 .detail-transfer{display:flex;flex-direction:column;gap:4px;margin-top:6px}.detail-transfer progress{width:100%;height:8px;border:0;border-radius:4px;overflow:hidden;appearance:none;background:#e9efeb;color:#388be0;accent-color:#388be0}.detail-transfer progress::-webkit-progress-bar{background:#e9efeb}.detail-transfer progress::-webkit-progress-value{background:#388be0;border-radius:4px}.detail-transfer progress.completed::-webkit-progress-value{background:#24a47a}.detail-transfer progress.failed::-webkit-progress-value{background:#d35d50}.detail-transfer progress::-moz-progress-bar{background:currentColor}.detail-transfer progress.completed{color:#24a47a;accent-color:#24a47a}.detail-transfer small{color:#627778;font-size:12px;text-align:right}.detail-error{display:block;margin-top:6px;color:#a73f37;overflow-wrap:anywhere}
 @media(max-width:600px){.details-modal{--detail-inset:12px}.detail-heading{flex-wrap:wrap}.detail-heading strong{flex-basis:60%}}
 </style>
