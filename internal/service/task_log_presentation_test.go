@@ -36,6 +36,28 @@ func TestTaskLogWarningPresentation(t *testing.T) {
 	}
 }
 
+// 受限格式提示可读且可溯源，不合并不同媒体的异常，也不丢失未知诊断。
+func TestYouTubeRestrictedFormatWarnings(t *testing.T) {
+	p := newTaskLogPresentation(time.Now())
+	for raw, hint := range map[string]string{
+		`WARNING: [youtube] Unable to fetch GVS PO Token for web client: Missing required Visitor Data. You may need to pass Visitor Data with --extractor-args "youtube:visitor_data=XXX"`: "访客标识",
+		"WARNING: [youtube] video-id: Sign in to confirm you’re not a bot":                "机器人验证",
+		"WARNING: [youtube] 请登录，以便我们确认你不是聊天机器人":                                           "机器人验证",
+		"WARNING: Only images are available for download. use --list-formats to see them": "没有可下载的音视频格式",
+	} {
+		for range 2 {
+			message := p.message(raw, time.Now())
+			if !strings.Contains(message, hint) || !strings.Contains(message, strings.TrimPrefix(raw, "WARNING: ")) {
+				t.Fatal(message)
+			}
+		}
+	}
+	unknown := "WARNING: [youtube] unexpected extraction diagnostic"
+	if p.message(unknown, time.Now()) != "[引擎警告] [youtube] unexpected extraction diagnostic" {
+		t.Fatal("未知警告未保留")
+	}
+}
+
 // 模拟等待日志持续到来，只有真正的静默才补充扫描进度，无需等待真实十五秒。
 func TestScanHeartbeatDoesNotRepeatRequestWait(t *testing.T) {
 	start := time.Now()

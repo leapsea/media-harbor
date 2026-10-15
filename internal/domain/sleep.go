@@ -38,19 +38,15 @@ func (s PlatformSleepSettings) Until(platform string, now time.Time) time.Time {
 	return s.For(platform).Until(now)
 }
 
-// Validate 要求客户端提交两个完整窗口，关闭时也不能省略配置字段。
+// Validate 逐个平台检查已启用窗口，关闭的休眠数据不影响其他系统设置保存。
 func (s PlatformSleepSettings) Validate() error {
 	for _, platform := range []string{"instagram", "youtube"} {
 		window := s.For(platform)
-		if window.Start == "" || window.End == "" {
-			return fmt.Errorf("%s 休眠时间必须为 HH:mm", platform)
-		}
-		if window.Timezone == "" {
-			return fmt.Errorf("%s 休眠时区不能为空", platform)
-		}
 		if err := window.Validate(); err != nil {
 			return fmt.Errorf("%s 休眠设置：%w", platform, err)
 		}
+		/* 历史资产：关闭休眠时也预先检查 Start、End 与 Timezone 是否为空，
+		   导致窗口自身的 !Enabled 跳过规则无法生效。 */
 	}
 	return nil
 }

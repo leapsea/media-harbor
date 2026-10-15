@@ -148,18 +148,19 @@ func TestCurrentSettingsRejectMissingFieldsWithoutBackfill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"pipeline", "sleep", "log_lines", "disabled_sleep_start"} {
+	for _, field := range []string{"pipeline", "log_lines", "enabled_sleep_start", "enabled_sleep_timezone"} {
 		candidate := original
 		switch field {
 		case "pipeline":
 			candidate.Pipeline = domain.PipelineSettings{}
-		case "sleep":
-			candidate.Sleep = domain.PlatformSleepSettings{}
 		case "log_lines":
 			candidate.UI.TaskLogLines = 0
-		case "disabled_sleep_start":
-			candidate.Sleep.Instagram.Enabled = false
+		case "enabled_sleep_start":
+			candidate.Sleep.Instagram.Enabled = true
 			candidate.Sleep.Instagram.Start = ""
+		case "enabled_sleep_timezone":
+			candidate.Sleep.Instagram.Enabled = true
+			candidate.Sleep.Instagram.Timezone = ""
 		}
 		if err = a.SaveSettings(candidate); err == nil {
 			t.Fatalf("缺席字段被旧值补齐：%s", field)
@@ -174,5 +175,25 @@ func TestCurrentSettingsRejectMissingFieldsWithoutBackfill(t *testing.T) {
 	candidate.Sleep.Instagram.Enabled = false
 	if err = a.SaveSettings(candidate); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestSaveSettingsIgnoresDisabledSleep 关闭休眠时保存并发参数，不补写或校验无效的历史窗口。
+func TestSaveSettingsIgnoresDisabledSleep(t *testing.T) {
+	a := testApp(t, fakeEngine{})
+	s, err := a.Repo.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, window := range []domain.SleepSettings{{}, {Start: "NaN:NaN", End: "invalid", Timezone: "invalid"}} {
+		s.Sleep = domain.PlatformSleepSettings{Instagram: window, YouTube: window}
+		s.YouTubeConcurrent++
+		if err := a.SaveSettings(s); err != nil {
+			t.Fatal("关闭休眠阻止保存并发参数", err)
+		}
+		saved, err := a.Repo.Settings()
+		if err != nil || saved.Sleep != s.Sleep || saved.YouTubeConcurrent != s.YouTubeConcurrent {
+			t.Fatalf("保存结果=%+v error=%v", saved, err)
+		}
 	}
 }

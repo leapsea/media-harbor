@@ -1,4 +1,4 @@
-"""正式镜像与真实 yt-dlp：验证分辨率优先、画质上限和不可用清单刷新。"""
+"""正式镜像与真实 yt-dlp：验证画质、清单刷新及评论受限后的附属下载。"""
 import importlib.util
 import json
 import os
@@ -20,6 +20,8 @@ HTTP = source.SOURCE.replace("body=b'{}'", "body=json.dumps({'count':counts[self
 HTTP = HTTP.replace("elif self.path.endswith('.mp4'):", "elif self.path.endswith(('.mp4','.m4a','.webm')):")
 HTTP = HTTP.replace("Path('/fixture/media.mp4').read_bytes()",
                     "(Path('/fixture') / self.path.split('/')[-1]).read_bytes()")
+HTTP = HTTP.replace("elif self.path.endswith('.png'):",
+                    "elif self.path.endswith('.vtt'):\n            body=b'WEBVTT\\n\\n00:00.000 --> 00:00.200\\nfixture\\n'\n        elif self.path.endswith('.png'):")
 
 SDK = source.YOUTUBE_SDK.replace(
     "self._download_json('http://127.0.0.1:8001/post/youtube/'+code, code)",
@@ -29,7 +31,7 @@ OLD_FORMATS = """'formats':[{'format_id':'fixture','url':'http://127.0.0.1:8001/
                             'ext':'mp4','vcodec':'h264','acodec':'aac'}]"""
 NEW_FORMATS = """'formats': ([{'format_id':'sb','url':'http://127.0.0.1:8001/storyboard',
                              'ext':'mhtml','protocol':'mhtml','vcodec':'none','acodec':'none'}]
-                    if code=='never' or (code=='refresh' and count==1) else [
+                    if code=='never' or (code=='refresh' and count==1) or (code=='comments' and count==2) else [
                     {'format_id':'low','url':'http://127.0.0.1:8001/media/youtube/low.mp4',
                      'ext':'mp4','vcodec':'h264','acodec':'none','width':320,'height':180,'preference':1000},
                     {'format_id':'high','url':'http://127.0.0.1:8001/media/youtube/high.mp4',
@@ -40,6 +42,15 @@ NEW_FORMATS = """'formats': ([{'format_id':'sb','url':'http://127.0.0.1:8001/sto
                      'ext':'webm','vcodec':'none','acodec':'opus','quality':4}])"""
 assert OLD_FORMATS in SDK
 SDK = SDK.replace(OLD_FORMATS, NEW_FORMATS)
+# 评论重抓返回故事板，真实 SDK 仍保存评论；字幕和原始音轨应复用主任务快照。
+SDK = SDK.replace("'upload_date':'20261014','availability':'public',", """'upload_date':'20261014','availability':'public',
+                'comments':[{'id':'new-comment','text':'fresh comment'}] if self.get_param('getcomments') else [],
+                'subtitles':{'en':[{'url':'http://127.0.0.1:8001/fixture.vtt','ext':'vtt'}]},""")
+# 复现日志中的诊断链，不连接 YouTube，也不读取任何已保存 Cookie。
+SDK = SDK.replace("        return {'id':code", """        if code=='comments' and count==2:
+            self._downloader.report_warning('[youtube] Unable to fetch GVS PO Token for web client: Missing required Visitor Data.')
+            self._downloader.report_warning("[youtube] Sign in to confirm you're not a bot")
+        return {'id':code""")
 # 各场景使用独立频道身份，避免测试订阅被同一作者的唯一约束合并。
 SDK = SDK.replace("self.playlist_result(entries(),'author','author',channel='author',channel_id='author')",
                   "self.playlist_result(entries(),self._match_id(url),self._match_id(url),channel=self._match_id(url),channel_id=self._match_id(url))")
@@ -85,7 +96,7 @@ exec /app/server
                                    auto_subtitles=False, thumbnail=False, extra_audio=True, extract_audio=False)
         api.request("/settings", "PUT", settings)
         report = {}
-        for code, height in (("highest", 360), ("capped", 180), ("refresh", 360), ("never", None)):
+        for code, height in (("highest", 360), ("capped", 180), ("refresh", 360), ("never", None), ("comments", 360)):
             # 每次只扫描一个素材条目，独立配置便于核对刷新数量及失败范围。
             (RUN / "data/fixture-items.json").write_text(json.dumps([code]))
             options = dict(settings["youtube"], format="bestvideo+bestaudio/best")
@@ -94,6 +105,8 @@ exec /app/server
                            extract_audio=code == "highest")
             if code == "capped":
                 options["format"] = "bestvideo[height<=180]+bestaudio/best[height<=180]"
+            if code == "comments":
+                options.update(metadata=True, comments=True, subtitles=True, subtitle_languages="en")
             sub = api.request("/subscriptions", "POST", {"platform": "youtube",
                               "url": "https://www.youtube.com/@" + code, "display_name": code,
                               "enabled": False, "youtube": options})
@@ -104,7 +117,7 @@ exec /app/server
             media = next(t for t in tasks if t["content_id"])
             log = api.request(f"/subscriptions/{sub['id']}/log")["log"]
             requests = json.loads((RUN / "data/requests.json").read_text())
-            assert requests["/post/youtube/" + code] == (2 if code in ("refresh", "never") else 1), requests
+            assert requests["/post/youtube/" + code] == (2 if code in ("refresh", "never", "comments") else 1), requests
             if height is None:
                 assert media["status"] == "failed" and "重新解析后仍无" in media["error"], media
                 assert "可用视频流 0" in log and "附属任务 [" not in log, log
@@ -131,6 +144,17 @@ exec /app/server
                 report[code + "-audio"] = {"native_codec": "opus", "packet_hash_unchanged": True}
                 if code == "refresh":
                     assert "重新解析完整格式清单" in log, log
+                if code == "comments":
+                    metadata = next(p for p in content["paths"] if p.endswith(".info.json"))
+                    saved = json.loads((RUN / metadata.lstrip('/')).read_text())
+                    assert saved["comments"][0]["text"] == "fresh comment", saved
+                    subtitle = next(p for p in content["paths"] if p.endswith(".en.vtt"))
+                    assert "fixture" in (RUN / subtitle.lstrip('/')).read_text(), subtitle
+                    assert "沿用主任务的有效清单" in log and "重新解析完整格式清单" not in log, log
+                    assert "没有可下载的音视频格式" in log, log
+                    assert "访客标识" in log and "机器人验证" in log and "原始提示" in log, log
+                    report["comments-snapshot"] = {"new_comments_saved": True, "subtitle_downloaded": True,
+                                                   "original_audio_downloaded": True, "no_extra_reparse": True}
             report[code] = {"status": media["status"], "height": height,
                             "metadata_requests": requests["/post/youtube/" + code]}
             print("PASS " + code + ": " + json.dumps(report[code], ensure_ascii=False), flush=True)

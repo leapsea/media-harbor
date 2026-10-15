@@ -45,6 +45,21 @@ func (p *taskLogPresentation) message(raw string, at time.Time) string {
 		message = "[引擎警告] 无法解析 YouTube 网页初始数据"
 	} else if raw == "WARNING: [youtube] Incomplete data received in embedded initial data; re-fetching using API." {
 		message = "[引擎警告] YouTube 网页数据不完整，正在通过 API 重新获取"
+	} else {
+		// 仅解释已知的 YouTube 限制，保留原文供排查；不据此修改认证或请求参数。
+		// 仅图片警告来自 yt-dlp 通用层，尚不能单独判断是限流、验证还是内容限制。
+		hint := ""
+		switch {
+		case strings.HasPrefix(raw, "WARNING: [youtube]") && strings.Contains(raw, "Unable to fetch GVS PO Token") && strings.Contains(raw, "Missing required Visitor Data"):
+			hint = "YouTube 网页未提供访客标识，当前客户端无法获取媒体校验令牌，部分格式可能不可用"
+		case strings.HasPrefix(raw, "WARNING: [youtube]") && (strings.Contains(raw, "Sign in to confirm you’re not a bot") || strings.Contains(raw, "Sign in to confirm you're not a bot") || strings.Contains(raw, "请登录，以便我们确认你不是聊天机器人")):
+			hint = "YouTube 要求机器人验证；当前解析可能缺少媒体格式，增加下载并发无法解决验证限制"
+		case raw == "WARNING: Only images are available for download. use --list-formats to see them":
+			hint = "本次解析仅返回图片或故事板，没有可下载的音视频格式；请结合前面的限流、验证或访问限制日志排查"
+		}
+		if hint != "" {
+			message = "[引擎警告] " + hint + "；原始提示：" + strings.TrimSpace(strings.TrimPrefix(raw, "WARNING:"))
+		}
 	}
 	// 只合并稳定的语言提示，接口异常、解析回退与未知警告仍逐条保留。
 	if !coalescible {

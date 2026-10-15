@@ -24,15 +24,29 @@ func TestPlatformSleepWindowsAreIndependent(t *testing.T) {
 	if err := s.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	// 关闭单个平台保持另一个窗口；不提供任一平台字段时不能借用另一平台配置。
+	// 关闭单个平台保持另一个窗口；未启用的平台允许尚未填写休眠数据。
 	s.Instagram.Enabled = false
 	now, _ := time.Parse(time.RFC3339, "2026-10-15T01:30:00Z")
 	if s.Until("youtube", now).IsZero() {
 		t.Fatal("关闭Instagram影响了YouTube")
 	}
 	s.Instagram = SleepSettings{}
-	if err := s.Validate(); err == nil {
-		t.Fatal("缺席的平台休眠窗口被接受")
+	if err := s.Validate(); err != nil {
+		t.Fatal("关闭的平台仍要求休眠数据", err)
+	}
+}
+
+// TestDisabledSleepValidation 关闭时忽略空值及历史无效值，重新开启后仍要求合法窗口。
+func TestDisabledSleepValidation(t *testing.T) {
+	for _, window := range []SleepSettings{{}, {false, "NaN:NaN", "25:60", "invalid"}, {false, "01:00", "01:00", ""}} {
+		s := PlatformSleepSettings{Instagram: window, YouTube: window}
+		if err := s.Validate(); err != nil {
+			t.Fatal("关闭休眠不应参与校验", window, err)
+		}
+		s.YouTube.Enabled = true
+		if err := s.Validate(); err == nil {
+			t.Fatal("开启休眠接受了无效值", window)
+		}
 	}
 }
 

@@ -143,3 +143,79 @@ func TestYouTubeFormatDiagnostics(t *testing.T) {
 		t.Fatal(logs)
 	}
 }
+
+// 评论重新解析受限时仍保存新评论，字幕与音频不能被仅图片清单拖入重试。
+// 有效的新清单则继续生效，避免一直使用旧资源地址。
+func TestYouTubeCommentsKeepUsableDownloadSnapshot(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("未安装 Python")
+	}
+	for _, degraded := range []bool{true, false} {
+		t.Run(map[bool]string{true: "images-only", false: "fresh-formats"}[degraded], func(t *testing.T) {
+			root := t.TempDir()
+			trace := filepath.Join(root, "trace")
+			quoted, _ := json.Marshal(trace)
+			script := "#!" + python + "\n" + `import sys,json,pathlib
+a=sys.argv[1:];p=pathlib.Path(` + string(quoted) + `)
+phase='comments' if '--write-comments' in a else 'parse' if '--dump-single-json' in a else 'metadata' if '--write-info-json' in a else 'subtitle' if '--write-subs' in a else 'audio' if '-x' in a else 'video'
+with p.open('a') as f: f.write(phase+'\n')
+info={'id':'id','title':'fixture','subtitles':{'en':[{'url':'https://example.test/sub.vtt'}]},
+      'formats':[{'format_id':'old','vcodec':'h264','acodec':'aac','url':'https://example.test/old.mp4'}]}
+if phase=='parse': print(json.dumps(info))
+elif phase=='comments':
+ info['comments']=[{'id':'new-comment','text':'fresh comment'}]
+ info['formats']=[{'format_id':'sb','vcodec':'none','acodec':'none'}] if ` + map[bool]string{true: "True", false: "False"}[degraded] + ` else [{'format_id':'fresh','vcodec':'h264','acodec':'aac','url':'https://example.test/fresh.mp4'}]
+ if ` + map[bool]string{true: "False", false: "True"}[degraded] + `: pathlib.Path(a[a.index('-o')+1]).with_name('fixture-id.info.json').write_text(json.dumps(info))
+ print(json.dumps(info))
+elif phase=='metadata':
+ loaded=json.loads(pathlib.Path(a[a.index('--load-info-json')+1]).read_text())
+ assert loaded['comments'][0]['text']=='fresh comment',loaded
+ pathlib.Path(a[a.index('-o')+1]).with_name('fixture-id.info.json').write_text(json.dumps(loaded))
+elif phase in ('subtitle','audio'):
+ loaded=json.loads(pathlib.Path(a[a.index('--load-info-json')+1]).read_text())
+ assert loaded['formats'][0]['format_id']==` + map[bool]string{true: "'old'", false: "'fresh'"}[degraded] + `,loaded
+`
+			if err := os.WriteFile(filepath.Join(root, "yt-dlp"), []byte(script), 0755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+			var logs []string
+			options := domain.YouTubeOptions{Video: true, Format: "best", Comments: true, Metadata: true, Subtitles: true, SubtitleLanguages: "en", ExtraAudio: true, Fragments: 1}
+			err := (CLI{DataDir: root}).Download(context.Background(), domain.Subscription{Platform: "youtube"}, domain.Content{URL: "https://example.test/video"}, options, filepath.Join(root, "work"), func(s string) { logs = append(logs, s) })
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, _ := os.ReadFile(trace)
+			want := "parse\nvideo\ncomments\nsubtitle\naudio\n"
+			if degraded {
+				want = "parse\nvideo\ncomments\nmetadata\nsubtitle\naudio\n"
+			}
+			if string(raw) != want {
+				t.Fatalf("不应重新解析或跳过附属项：%s", raw)
+			}
+			comments, err := os.ReadFile(filepath.Join(root, "work", "fixture-id.info.json"))
+			if err != nil || !strings.Contains(string(comments), "fresh comment") {
+				t.Fatalf("新评论未保存：%s %v", comments, err)
+			}
+			if strings.Contains(strings.Join(logs, "\n"), "沿用主任务的有效清单") != degraded {
+				t.Fatal(logs)
+			}
+		})
+	}
+}
+
+// 无视频编码的独立音轨仍是媒体；故事板和缺失清单不算音视频格式。
+func TestYouTubeHasMediaFormats(t *testing.T) {
+	for raw, want := range map[string]bool{
+		`{"formats":[{"vcodec":"none","acodec":"opus"}]}`: true,
+		`{"formats":[{"vcodec":"av1","acodec":"none"}]}`:  true,
+		`{"formats":[{"vcodec":"none","acodec":"none"}]}`: false,
+		`{"formats":[]}`: false,
+		`{}`:             false,
+	} {
+		if youtubeHasMediaFormats([]byte(raw)) != want {
+			t.Fatal(raw)
+		}
+	}
+}

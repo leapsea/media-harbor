@@ -132,10 +132,13 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 	// 评论需要实时分页获取；只有主任务开始后才请求，并覆盖可变元数据。
 	if options.Metadata || options.Comments {
 		child("元数据与评论", func() error {
-			if !options.Comments {
+			writeMetadata := func() error {
 				args := append(append([]string{}, cached...), "--skip-download", "--write-info-json", "--force-overwrites", "-o", filepath.Join(dir, "%(title)s-%(id)s.%(ext)s"))
 				_, err := c.runYouTube(ctx, args, log, false, "media")
 				return err
+			}
+			if !options.Comments {
+				return writeMetadata()
 			}
 			args := append(append([]string{}, metadataArgs...), "--write-info-json", "--force-overwrites", "-o", filepath.Join(dir, "%(title)s-%(id)s.%(ext)s"))
 			if options.Comments {
@@ -145,8 +148,38 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 			if err != nil {
 				return err
 			}
-			// 之后的附属项使用更新后的清单，字幕只选一份。
+			// 评论独立保存；限流或验证失败产生的空媒体清单不能污染下载快照。
+			if youtubeHasMediaFormats(metadata) && !youtubeHasMediaFormats(updated) {
+				var snapshot, comments map[string]json.RawMessage
+				if err := json.Unmarshal(metadata, &snapshot); err != nil {
+					return err
+				}
+				if err := json.Unmarshal(updated, &comments); err != nil {
+					return err
+				}
+				// 仅合并本次评论；不将受限解析的其他缺失字段覆盖到主任务信息。
+				for _, key := range []string{"comments", "comment_count"} {
+					if value, ok := comments[key]; ok {
+						snapshot[key] = value
+					}
+				}
+				metadata, err = json.Marshal(snapshot)
+				if err != nil {
+					return err
+				}
+				if err := os.WriteFile(metadataPath, metadata, 0644); err != nil {
+					return err
+				}
+				// SDK 在没有选中格式时跳过 info.json，借有效快照补写，沿用其命名与清理规则。
+				if err := writeMetadata(); err != nil {
+					return err
+				}
+				log("评论解析结果已保存；本次解析未返回音视频格式，后续附属下载沿用主任务的有效清单；地址过期时仍重新解析")
+				return nil
+			}
+			// 之后的附属项使用有效的更新清单，字幕只选一份。
 			metadata = updated
+			// 历史资产：评论解析结果直接覆盖 metadata 与 .metadata.json，未区分仅图片清单。
 			return os.WriteFile(metadataPath, metadata, 0644)
 		})
 	}
@@ -271,6 +304,26 @@ func (c CLI) youtubeMetadataArgs(sub domain.Subscription, options domain.YouTube
 // 视频存在性优先，随后比较分辨率和帧率；同分辨率的编码、音轨仍由引擎选择。
 func youtubeFormatArgs(format string) []string {
 	return []string{"-f", format, "--format-sort", config.YouTubeFormatSort, "--format-sort-force"}
+}
+
+// youtubeHasMediaFormats 只判断音视频流是否存在，不将故事板当作可下载媒体。
+// 评论和元数据专用任务允许没有音视频格式，仍使用其最新解析结果。
+func youtubeHasMediaFormats(raw []byte) bool {
+	var info struct {
+		Formats []struct {
+			Vcodec string `json:"vcodec"`
+			Acodec string `json:"acodec"`
+		} `json:"formats"`
+	}
+	if json.Unmarshal(raw, &info) != nil {
+		return false
+	}
+	for _, format := range info.Formats {
+		if (format.Vcodec != "" && format.Vcodec != "none") || (format.Acodec != "" && format.Acodec != "none") {
+			return true
+		}
+	}
+	return false
 }
 
 // logYouTubeFormats 记录平台实际返回的可下载视频流，预览故事板不能算作视频。

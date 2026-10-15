@@ -4,12 +4,17 @@ import ToggleSwitch from 'primevue/toggleswitch'
 import HourMinutePicker from './HourMinutePicker.vue'
 import { t } from '../i18n'
 import type { Settings } from '../types'
+import { withSleepEnabled } from '../utils/sleep'
 
 /** 平台卡片编辑同一份表单，窗口、请求预算与下载线程均按平台定位。 */
 const props = defineProps<{ platform: 'instagram' | 'youtube'; disabled: boolean }>()
 const settings = defineModel<Settings>({ required: true })
 const sleep = computed(() => settings.value.sleep[props.platform])
 const producer = computed(() => settings.value.pipeline[props.platform])
+/** 只有开启时补齐缺席字段；关闭保留原值，重新开启仍回显已有窗口。 */
+function setSleepEnabled(enabled: boolean) {
+ settings.value.sleep[props.platform] = withSleepEnabled(sleep.value, enabled)
+}
 /** 并发字段保留原保存结构，重排界面不会改变消费者计数语义。 */
 const concurrency = computed({
  get: () => settings.value[props.platform === 'instagram' ? 'instagram_concurrent' : 'youtube_concurrent'],
@@ -27,7 +32,8 @@ const id = (field: string) => `${props.platform}-${field}`
   <div class="form-row"><label :for="id('concurrency')">{{ t('下载并发') }}</label><input :id="id('concurrency')" v-model.number="concurrency" type="number" min="1" step="1" required :disabled="disabled"></div>
   <div class="platform-rest">
    <h4>{{ t('每日休眠') }}</h4>
-   <div class="form-row"><label :for="id('sleep-enabled')">{{ t('启用休眠') }}</label><ToggleSwitch v-model="sleep.enabled" :input-id="id('sleep-enabled')" :disabled="disabled" /></div>
+   <div class="form-row"><label :for="id('sleep-enabled')">{{ t('启用休眠') }}</label><ToggleSwitch :model-value="sleep.enabled" @update:model-value="setSleepEnabled" :input-id="id('sleep-enabled')" :disabled="disabled" /></div>
+   <!-- 历史资产：v-model="sleep.enabled" 仅修改开关，首次开启没有填充缺席时间与时区。 -->
    <!-- 每个平台独立使用24小时弹框，日期和秒不参与业务设置。 -->
    <div class="rest-times">
     <label :for="id('sleep-start')">{{ t('开始时间') }}<HourMinutePicker v-model="sleep.start" :input-id="id('sleep-start')" :label="t('开始时间')" :required="sleep.enabled" :disabled="!sleep.enabled || disabled" /></label>
