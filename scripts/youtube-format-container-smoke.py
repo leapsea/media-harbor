@@ -15,6 +15,12 @@ RUN = ROOT / ".test-runtime/youtube-format" / str(time.time_ns())
 NAME = "media-harbor-youtube-format-" + RUN.name
 api.BASE = "http://127.0.0.1:18883/api"
 
+# 复现实际长中文标题，同时覆盖同标题不同 ID、超长 emoji 以及普通短标题。
+LONG_TITLE = "【会员限免】（宗馥莉已辞去娃哈哈集团董事长等职务）几个月前会被骂爆的视频终于可以公开了，剑走偏锋，必有反噬 ｜ 国企改制 ｜ 小三 ｜ 税务 ｜ 人设 ｜ 副国级公公 ｜ 绿卡"
+TITLES = {"H7QIMPtlx-k": LONG_TITLE, "same-title1": LONG_TITLE,
+          "emoji-long1": "中文标题🎬" * 100, "symbols1234": ':?/' * 100, "short-title": "short title"}
+assert len((LONG_TITLE + "-H7QIMPtlx-k.f251.webm.part").encode()) > 255
+
 # 保留实际 HTTP、yt-dlp 选流、音视频合并和 Go 调度，仅用本地素材替换 YouTube 提取器。
 HTTP = source.SOURCE.replace("body=b'{}'", "body=json.dumps({'count':counts[self.path]}).encode()")
 HTTP = HTTP.replace("elif self.path.endswith('.mp4'):", "elif self.path.endswith(('.mp4','.m4a','.webm')):")
@@ -55,6 +61,9 @@ SDK = SDK.replace("        return {'id':code", """        if code=='comments' an
 SDK = SDK.replace("self.playlist_result(entries(),'author','author',channel='author',channel_id='author')",
                   "self.playlist_result(entries(),self._match_id(url),self._match_id(url),channel=self._match_id(url),channel_id=self._match_id(url))")
 SDK = SDK.replace("'channel_id':'author'", "'channel_id':code")
+SDK = SDK.replace("'title':code", "'title':" + repr(TITLES) + ".get(code,code)")
+SDK = SDK.replace("'format_id':'opus'", "'format_id':'251'")
+SDK = SDK.replace("'subtitles':{'en':", "'thumbnail':'http://127.0.0.1:8001/media.png','subtitles':{'en':")
 # 适配器入口同时覆盖普通 CLI 和 Go 使用的 Python SDK 控制通道。
 WRAPPER = "#!/opt/engines/bin/python3\n" + SDK + """
 if sys.argv[1:3]==['-u','-c']:
@@ -83,6 +92,7 @@ ffmpeg -v error -f lavfi -i color=s=320x180:d=0.2 -c:v libx264 -y /fixture/low.m
 ffmpeg -v error -f lavfi -i color=s=640x360:d=0.2 -c:v libx264 -y /fixture/high.mp4
 ffmpeg -v error -f lavfi -i anullsrc -t 0.2 -c:a aac -y /fixture/audio.m4a
 ffmpeg -v error -f lavfi -i sine=frequency=440:duration=0.2 -c:a libopus -y /fixture/audio.webm
+ffmpeg -v error -f lavfi -i color=s=32x32 -frames:v 1 -y /fixture/media.png
 /opt/engines/bin/python3 /fixture/source.py &
 exec /app/server
 """
@@ -96,7 +106,8 @@ exec /app/server
                                    auto_subtitles=False, thumbnail=False, extra_audio=True, extract_audio=False)
         api.request("/settings", "PUT", settings)
         report = {}
-        for code, height in (("highest", 360), ("capped", 180), ("refresh", 360), ("never", None), ("comments", 360)):
+        for code, height in (("highest", 360), ("capped", 180), ("refresh", 360), ("never", None), ("comments", 360),
+                             *((code,360) for code in TITLES)):
             # 每次只扫描一个素材条目，独立配置便于核对刷新数量及失败范围。
             (RUN / "data/fixture-items.json").write_text(json.dumps([code]))
             options = dict(settings["youtube"], format="bestvideo+bestaudio/best")
@@ -107,6 +118,9 @@ exec /app/server
                 options["format"] = "bestvideo[height<=180]+bestaudio/best[height<=180]"
             if code == "comments":
                 options.update(metadata=True, comments=True, subtitles=True, subtitle_languages="en")
+            if code in TITLES:
+                options.update(metadata=True, comments=True, subtitles=True, subtitle_languages="en",
+                               thumbnail=True, extract_audio=True, audio_format='best')
             sub = api.request("/subscriptions", "POST", {"platform": "youtube",
                               "url": "https://www.youtube.com/@" + code, "display_name": code,
                               "enabled": False, "youtube": options})
@@ -117,7 +131,7 @@ exec /app/server
             media = next(t for t in tasks if t["content_id"])
             log = api.request(f"/subscriptions/{sub['id']}/log")["log"]
             requests = json.loads((RUN / "data/requests.json").read_text())
-            assert requests["/post/youtube/" + code] == (2 if code in ("refresh", "never", "comments") else 1), requests
+            assert requests["/post/youtube/" + code] == (2 if code in ("refresh", "never", "comments") or code in TITLES else 1), requests
             if height is None:
                 assert media["status"] == "failed" and "重新解析后仍无" in media["error"], media
                 assert "可用视频流 0" in log and "附属任务 [" not in log, log
@@ -142,6 +156,23 @@ exec /app/server
                     extracted = next(p for p in content["paths"] if p.endswith(".extracted.opus"))
                     assert audio_hash(extracted) == original_hash, extracted
                 report[code + "-audio"] = {"native_codec": "opus", "packet_hash_unchanged": True}
+                if code in TITLES:
+                    assert content['title'] == TITLES[code],content
+                    metadata = next(p for p in content['paths'] if p.endswith('.info.json'))
+                    saved = json.loads((RUN / metadata.lstrip('/')).read_text())
+                    assert saved['title'] == TITLES[code] and saved['comments'],saved
+                    for suffix in ('.mp4','.audio.opus','.extracted.opus','.info.json','.en.vtt','.png'):
+                        assert any(p.endswith(suffix) for p in content['paths']),(suffix,content)
+                    assert all(code+'.' in Path(p).name and len(Path(p).name.encode()) <= 255
+                               and (RUN / p.lstrip('/')).is_file() for p in content['paths']),content
+                    if code == 'short-title':
+                        assert Path(path).name == 'short title-short-title.mp4',path
+                    # 实际下载日志包含中间格式文件名；标题限制也覆盖 .f251.webm 等临时产物。
+                    destinations = [line.split('Destination: ',1)[1] for line in log.splitlines() if 'Destination: ' in line]
+                    assert any('.f251.webm' in p for p in destinations),destinations
+                    assert all(len(Path(p).name.encode()) <= 255 for p in destinations),destinations
+                    report[code+'-filename'] = {'full_title_preserved':True,'id_preserved':True,
+                                              'max_filename_bytes':max(len(Path(p).name.encode()) for p in content['paths'])}
                 if code == "refresh":
                     assert "重新解析完整格式清单" in log, log
                 if code == "comments":

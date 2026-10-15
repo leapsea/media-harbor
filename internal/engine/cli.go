@@ -455,7 +455,8 @@ func (c CLI) Download(ctx context.Context, s domain.Subscription, item domain.Co
 // 仅下载字幕等附加文件时使用 skip-download。
 // 本地提取需要视频文件，因此自动请求视频下载。
 func youtubeArgs(o domain.YouTubeOptions, dir string) []string {
-	a := []string{"--no-playlist", "--newline", "-o", filepath.Join(dir, "%(title)s-%(id)s.%(ext)s"), "--concurrent-fragments", strconv.Itoa(o.Fragments)}
+	a := []string{"--no-playlist", "--newline", "--concurrent-fragments", strconv.Itoa(o.Fragments)}
+	a = append(a, youtubeOutputArgs(dir, "")...)
 	if o.Video || o.ExtractAudio {
 		// 画质选择与 MP4 封装独立：合并或重封装，不重新编码视频。
 		a = append(a, youtubeFormatArgs(o.Format)...)

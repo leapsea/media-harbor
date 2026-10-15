@@ -68,6 +68,15 @@ func CommentDefaults(o domain.YouTubeOptions) domain.YouTubeOptions {
 // YouTubeFormatSort 以视频存在性、分辨率、帧率为顺序，不让来源优先级压过尺寸。
 const YouTubeFormatSort = "hasvid,res,fps"
 
+// YouTubeFilenameStem 按 UTF-8 字节限制标题，为格式编号、分片、字幕及音频后缀预留空间。
+// 只缩短磁盘文件名中的标题，完整 ID 保持同标题视频之间的唯一性。
+// 历史资产：各阶段使用 %(title)s-%(id)s，长中文标题会使临时文件超过文件系统限制。
+const YouTubeFilenameStem = "%(filename_title).160B-%(id)s"
+
+// YouTubeFilenameTitle 让 SDK 先清理文件名副本，避免冒号、斜杠等转换为全角字符后再次超长。
+// 原 title 字段保持完整，仅输出模板读取该副本。
+const YouTubeFilenameTitle = "%(title)S:%(filename_title)s"
+
 // YouTubeMetadataCacheTTL 保留近期格式清单，403 与格式不可用仍走串行生产者刷新。
 const YouTubeMetadataCacheTTL = 15 * time.Minute
 const YouTubeMetadataCacheCapacity = 128

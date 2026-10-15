@@ -135,7 +135,8 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 	if options.Metadata || options.Comments {
 		child("元数据与评论", func() error {
 			writeMetadata := func() error {
-				args := append(append([]string{}, cached...), "--skip-download", "--write-info-json", "--force-overwrites", "-o", filepath.Join(dir, "%(title)s-%(id)s.%(ext)s"))
+				args := append(append([]string{}, cached...), "--skip-download", "--write-info-json", "--force-overwrites")
+				args = append(args, youtubeOutputArgs(dir, "")...)
 				_, err := c.runYouTube(ctx, args, log, false, "media")
 				return err
 			}
@@ -144,7 +145,8 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 			}
 			// dump-single-json 默认启用模拟模式；显式关闭模拟才能将评论实际写入文件。
 			// 仍保留 skip-download，不会重复下载主视频。
-			args := append(append([]string{}, metadataArgs...), "--no-simulate", "--write-info-json", "--force-overwrites", "-o", filepath.Join(dir, "%(title)s-%(id)s.%(ext)s"))
+			args := append(append([]string{}, metadataArgs...), "--no-simulate", "--write-info-json", "--force-overwrites")
+			args = append(args, youtubeOutputArgs(dir, "")...)
 			if options.Comments {
 				args = append(args, "--write-comments")
 				args = append(args, youtubeCommentExtractorArgs(sub.RequestLanguage, options)...)
@@ -214,7 +216,8 @@ func (c CLI) downloadYouTube(ctx context.Context, sub domain.Subscription, item 
 		child("额外音频", func() error {
 			// best 保留 Opus/AAC 等源编码；只有封装内含视频时才无损分离音轨。
 			log("额外音频：下载平台最高品质音轨，保留原编码，不指定转码格式或码率")
-			args := []string{"--no-playlist", "-f", "bestaudio/best", "-x", "--audio-format", "best", "-o", filepath.Join(dir, "%(title)s-%(id)s.audio.%(ext)s")}
+			args := []string{"--no-playlist", "-f", "bestaudio/best", "-x", "--audio-format", "best"}
+			args = append(args, youtubeOutputArgs(dir, ".audio")...)
 			// 历史资产：--audio-format options.AudioFormat --audio-quality options.AudioQuality 强制转换源音轨。
 			return media("额外音频", args)
 		})
@@ -310,6 +313,12 @@ func (c CLI) youtubeMetadataArgs(sub domain.Subscription, options domain.YouTube
 // 视频存在性优先，随后比较分辨率和帧率；同分辨率的编码、音轨仍由引擎选择。
 func youtubeFormatArgs(format string) []string {
 	return []string{"-f", format, "--format-sort", config.YouTubeFormatSort, "--format-sort-force"}
+}
+
+// youtubeOutputArgs 统一所有产物的命名，先使用 SDK 清理文件名副本，再限制 UTF-8 字节数。
+// 后缀放在完整 ID 后，主视频、独立音频和附属文件都保留相同的可识别主干。
+func youtubeOutputArgs(dir, suffix string) []string {
+	return []string{"--parse-metadata", config.YouTubeFilenameTitle, "-o", filepath.Join(dir, config.YouTubeFilenameStem+suffix+".%(ext)s")}
 }
 
 // 评论排序与上限由 SDK 在分页中执行；重传完整参数以保留请求语言。
