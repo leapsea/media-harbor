@@ -19,11 +19,11 @@ func (e *preparationEngine) Scan(_ context.Context, _ domain.Subscription, _ int
 	return domain.ScanResult{}, emit(domain.ScanResult{Items: []domain.Content{{RemoteID: "done"}, {RemoteID: "failed"}, {RemoteID: "new"}, {RemoteID: "new"}}})
 }
 
-func (e *preparationEngine) Prepare(_ context.Context, sub domain.Subscription, item domain.Content, _ domain.YouTubeOptions, _ func(string)) error {
+func (e *preparationEngine) Prepare(_ context.Context, sub domain.Subscription, item domain.Content, _ domain.YouTubeOptions, _ func(string)) (domain.Content, error) {
 	// 全量包含已完成内容，生产者仍按资源身份避免同一轮重复请求。
 	e.prepared = append(e.prepared, item.RemoteID)
 	e.languages = append(e.languages, sub.RequestLanguage)
-	return nil
+	return item, nil
 }
 
 func TestFullProducerPreparesEveryUniqueDownload(t *testing.T) {

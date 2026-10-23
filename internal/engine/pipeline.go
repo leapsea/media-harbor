@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"media-harbor/internal/config"
 	"media-harbor/internal/domain"
@@ -155,18 +156,45 @@ type mediaConsumerKey struct{}
 type mediaConsumerScope struct{ release func() }
 
 // Prepare 在队列有容量且增量边界检查通过后执行，不再次检查本地历史。
-func (c CLI) Prepare(ctx context.Context, sub domain.Subscription, item domain.Content, options domain.YouTubeOptions, log func(string)) error {
+func (c CLI) Prepare(ctx context.Context, sub domain.Subscription, item domain.Content, options domain.YouTubeOptions, log func(string)) (domain.Content, error) {
 	if sub.Platform != "youtube" || c.pipeline(sub.Platform) == nil {
-		return nil
+		return item, nil
 	}
-	_, err := c.youtubeMetadata(ctx, sub, item, options, log, item.Overwrite)
+	raw, err := c.youtubeMetadata(ctx, sub, item, options, log, item.Overwrite)
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return item, ctx.Err()
 	}
 	if err != nil {
 		log(fmt.Sprintf("生产者解析失败；媒体 %s；下载任务将记录错误：%v", item.RemoteID, err))
+		return item, nil
 	}
-	return nil
+	return describeYouTube(item, raw), nil
+}
+
+// describeYouTube 用单视频解析结果补全入队内容；详情地址的扫描项只有标识与地址。
+// 已有的扫描字段保留，解析缺失的字段不清空原值。
+func describeYouTube(item domain.Content, raw []byte) domain.Content {
+	var v youtubeEntry
+	if json.Unmarshal(raw, &v) != nil {
+		return item
+	}
+	published, _ := time.Parse("20060102", v.UploadDate)
+	if published.IsZero() && v.Timestamp != 0 {
+		published = time.Unix(int64(v.Timestamp), 0)
+	}
+	if !published.IsZero() {
+		item.Published = published
+	}
+	if v.Title != "" {
+		item.Title = v.Title
+	}
+	if v.ChannelID != "" {
+		item.ChannelID = v.ChannelID
+	}
+	if v.Availability != "" {
+		item.Availability = v.Availability
+	}
+	return item
 }
 
 // 保存完整视频信息供消费者复用；重试明确要求 fresh 时才重新获取地址。

@@ -233,8 +233,9 @@ func (s Settings) YouTubeOptionsFor(sub Subscription) YouTubeOptions {
 type ConfigurableEngine interface{ Configure(Settings) }
 
 // MediaPreparer 在发现新媒体后、入队前准备可复用描述；解析失败仍由下载任务记录。
+// 返回值补全扁平扫描缺少的发布日期、标题与访问信息，入队即可展示，不必等下载结束。
 type MediaPreparer interface {
-	Prepare(context.Context, Subscription, Content, YouTubeOptions, func(string)) error
+	Prepare(context.Context, Subscription, Content, YouTubeOptions, func(string)) (Content, error)
 }
 
 // ScanResult 仅表示引擎在本次扫描中实际可获取的内容。

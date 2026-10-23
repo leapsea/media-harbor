@@ -154,9 +154,11 @@ func (a *App) streamScan(ctx context.Context, sub domain.Subscription, limit int
 					needed = needed || required
 				}
 				if needed {
-					if err := preparer.Prepare(ctx, current, item, options, log); err != nil {
+					prepared, err := preparer.Prepare(ctx, current, item, options, log)
+					if err != nil {
 						return err
 					}
+					item = prepared
 				}
 			}
 			// 这里只交付一个媒体，缓存描述由引擎持有，不写进公开内容索引。
