@@ -81,7 +81,7 @@ export interface DetailPart {
  error?: string; resource_id: number; task_id: number; labels: string[]; number?: number
 }
 export interface DetailContent { post_id: number; manifest_complete: boolean; expected: number; completed: number; key: string; title: string; status: string; parts: DetailPart[]; error?: string }
-export interface TaskDetails { platform: string; items: DetailContent[] }
+export interface TaskDetails { platform: string; items: DetailContent[]; hidden: number }
 
 /** 配置存在、Cookie可用和平台能否运行分别展示。 */
 export interface CookieStatus { configured: boolean; usable: boolean; platform_enabled: boolean; state: string; reason?: string; revision: number; disabled_at?: string }

@@ -302,5 +302,11 @@
   "转码音频质量": "Audio encoding quality",
   "最新评论数量（含回复）": "Latest comments (including replies)",
   "评论超时（秒）": "Comment timeout (seconds)",
-  "评论数量与超时时间必须为正整数": "Comment count and timeout must be positive integers"
+  "评论数量与超时时间必须为正整数": "Comment count and timeout must be positive integers",
+  "检查更新": "Check for updates",
+  "可更新至": "Update to",
+  "更新": "Update",
+  "已是最新": "Up to date",
+  "引擎已更新": "Engine updated",
+  "显示更早的记录": "Show earlier records"
 }

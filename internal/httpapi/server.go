@@ -2,7 +2,10 @@
 package httpapi
 
 import (
+	"compress/gzip"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -15,17 +18,24 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
 // API 不引入鉴权、限流或其他防御中间件，适用于 V1 单用户部署。
-type API struct{ app *service.App }
+type API struct {
+	app     *service.App
+	updater *engine.Updater
+}
 
 // Handler 路由显式调用应用服务；不会直接构造下载命令。
 // GET 提供领域快照，写操作进入应用服务维护业务状态。
 // 日志、Cookie 和配置使用独立接口，避免混入订阅结构。
-func Handler(app *service.App) http.Handler {
-	api := &API{app}
+func Handler(app *service.App) http.Handler { return HandlerWithEngines(app, nil) }
+
+// HandlerWithEngines 额外开放引擎在线更新；未提供更新器时相关接口返回不可用。
+func HandlerWithEngines(app *service.App, engines *engine.Updater) http.Handler {
+	api := &API{app, engines}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/subscriptions/dryrun", api.dryRun)
 	mux.HandleFunc("GET /api/dashboard", api.dashboard)
@@ -67,9 +77,10 @@ func Handler(app *service.App) http.Handler {
 	// 浏览器关闭面板时取消帖子任务与下载资源任务查询；计时头便于区分服务端与前端加载耗时。
 	mux.HandleFunc("GET /api/subscriptions/{id}/details", func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		v, e := app.TaskDetails(r.Context(), id(r))
+		history, _ := strconv.Atoi(r.URL.Query().Get("history"))
+		v, e := app.TaskDetailsWindow(r.Context(), id(r), history)
 		w.Header().Set("Server-Timing", fmt.Sprintf("details;dur=%.2f", float64(time.Since(start))/float64(time.Millisecond)))
-		reply(w, v, e)
+		replyCached(w, r, v, e)
 	})
 	// 历史读取：app.TaskDetails(id(r)) 没有传递 HTTP 请求取消信号。
 	mux.HandleFunc("GET /api/subscriptions/{id}/log", func(w http.ResponseWriter, r *http.Request) {
@@ -126,6 +137,8 @@ func Handler(app *service.App) http.Handler {
 		reply(w, map[string]int{"cleaned": n}, e)
 	})
 	mux.HandleFunc("GET /api/engines", api.engines)
+	mux.HandleFunc("GET /api/engines/status", api.engineStatus)
+	mux.HandleFunc("POST /api/engines/{name}/update", api.engineUpdate)
 	mux.HandleFunc("GET /api/cookies/{platform}", api.cookieStatus)
 	mux.HandleFunc("GET /api/cookies/{platform}/content", api.cookieContent)
 	mux.HandleFunc("PUT /api/cookies/{platform}", api.saveCookie)
@@ -188,6 +201,37 @@ func reply(w http.ResponseWriter, v any, e error) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// replyCached 为每秒轮询的大响应提供 ETag 与 gzip：内容未变时返回 304，变化时压缩传输。
+func replyCached(w http.ResponseWriter, r *http.Request, v any, e error) {
+	if e != nil {
+		reply(w, v, e)
+		return
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		reply(w, nil, err)
+		return
+	}
+	sum := sha1.Sum(raw)
+	tag := `"` + hex.EncodeToString(sum[:]) + `"`
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("ETag", tag)
+	w.Header().Set("Cache-Control", "no-cache")
+	if r.Header.Get("If-None-Match") == tag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Add("Vary", "Accept-Encoding")
+		zw := gzip.NewWriter(w)
+		_, _ = zw.Write(append(raw, '\n'))
+		_ = zw.Close()
+		return
+	}
+	_, _ = w.Write(append(raw, '\n'))
+}
+
 // id 从服务端路由变量读取内部记录主键。
 func id(r *http.Request) int64 { v, _ := strconv.ParseInt(r.PathValue("id"), 10, 64); return v }
 
@@ -246,7 +290,7 @@ func (api *API) dashboard(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]any{"version": config.ReleaseVersion(), "language": settings.UI.Language, "subscriptions": len(subs), "subscription_names": names, "counts": counts, "recent": items, "directories": api.app.Directories()}, nil)
 }
 
-// engines 仅提供独立运行依赖的当前版本；V1 更新通过重建镜像完成。
+// engines 提供独立运行依赖的当前版本；Python 引擎可在线更新，FFmpeg 随镜像更新。
 // 版本检测是按需操作，不在每四秒刷新中执行。
 func (api *API) engines(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -259,7 +303,7 @@ func (api *API) engines(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	reply(w, map[string]any{"versions": v, "update": "通过固定版本重新构建镜像"}, nil)
+	reply(w, map[string]any{"versions": v, "update": "yt-dlp、gallery-dl 可在线更新；FFmpeg 通过重新构建镜像更新"}, nil)
 }
 
 // Cookie 路径按平台独立保存；编辑文本不在日志中记录原文。
@@ -378,4 +422,25 @@ func (api *API) saveGalleryConfig(w http.ResponseWriter, r *http.Request) {
 		e = os.WriteFile(filepath.Join(api.app.Config.DataDir, "gallery-dl.json"), []byte(body.Config), 0600)
 	}
 	reply(w, map[string]bool{"ok": e == nil}, e)
+}
+
+// engineStatus 查询 PyPI 最新稳定版，网络失败只显示在对应引擎上。
+func (api *API) engineStatus(w http.ResponseWriter, r *http.Request) {
+	if api.updater == nil {
+		reply(w, nil, fmt.Errorf("引擎在线更新不可用"))
+		return
+	}
+	reply(w, map[string]any{"engines": api.updater.Status(r.Context())}, nil)
+}
+
+// engineUpdate 安装最新稳定版；新启动的下载进程使用新版本，运行中的进程不受影响。
+func (api *API) engineUpdate(w http.ResponseWriter, r *http.Request) {
+	if api.updater == nil {
+		reply(w, nil, fmt.Errorf("引擎在线更新不可用"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	version, err := api.updater.Update(ctx, r.PathValue("name"))
+	reply(w, map[string]string{"version": version}, err)
 }

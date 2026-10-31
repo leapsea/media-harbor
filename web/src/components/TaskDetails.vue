@@ -10,7 +10,11 @@ import { detailAnchor, largeFileBytes, statusDotPixels, transferSize } from '../
 const props = defineProps<{ task: Subscription }>()
 const emit = defineEmits<{ close: [] }>()
 const store = useMediaStore()
-const { details, loading } = useTaskDetails(props.task.id, store.reportError)
+/** 默认只取最近的已结束内容，数百条历史不随每秒轮询整体传输与渲染。 */
+const historyStep = 30
+const history = ref(historyStep)
+const { details, loading, reload } = useTaskDetails(props.task.id, store.reportError, history)
+let holdScroll = false
 const body = ref<HTMLElement>()
 const tailSpace = ref(0)
 const closeButton = ref<HTMLButtonElement>()
@@ -25,9 +29,20 @@ const anchor = computed(() => detailAnchor(details.value.items))
 /** 只在执行位置或列表顺序变化时推进窗口，字节轮询不会打断手动查看历史。 */
 const windowKey = computed(() => `${anchor.value}|${details.value.items.map(item => item.key).join('|')}`)
 let initialized = false
+/** 展开更早记录后保持当前阅读位置，不跳回执行位置。 */
+async function showEarlier() {
+ const viewport = body.value
+ const before = viewport ? viewport.scrollHeight : 0
+ holdScroll = true
+ history.value += 5 * historyStep
+ await reload()
+ await nextTick()
+ if (viewport) viewport.scrollTop += viewport.scrollHeight - before
+ holdScroll = false
+}
 watch(windowKey, async () => {
  await nextTick()
- if (!body.value) return
+ if (!body.value || holdScroll) return
  tailSpace.value = 0
  await nextTick()
  const viewport = body.value
@@ -48,6 +63,7 @@ watch(windowKey, async () => {
    <div ref="body" class="detail-body" :aria-busy="loading">
     <p v-if="loading" class="empty">{{ t('加载中') }}</p>
     <p v-else-if="!visibleItems.length" class="empty">{{ t('暂无下载任务') }}</p>
+    <button v-if="details.hidden > 0" class="detail-earlier" :disabled="loading" @click="showEarlier">{{ t('显示更早的记录') }}（{{ details.hidden }}）</button>
     <article v-for="item in visibleItems" :key="item.key" class="detail-item" :data-content-key="item.key">
      <!-- 父任务直到全部附属阶段结束才完成；媒体流的 100% 不替代父状态。 -->
      <div class="detail-heading"><span class="badge">{{ t('任务') }}</span><strong>{{ item.title }}</strong><!-- 完成状态与资源数量直接来自帖子任务，清单未知时不把可见下载资源任务数量当作总数。 -->
@@ -76,6 +92,7 @@ watch(windowKey, async () => {
 .detail-body{overflow:auto;min-height:0;max-height:65vh;overscroll-behavior:contain;overflow-anchor:none;margin-right:calc(4px - var(--detail-inset));padding:1px var(--detail-inset) 1px 1px;scrollbar-gutter:stable}
 .detail-item{border:1px solid #dce5df;border-radius:8px;overflow:hidden;background:#fff;box-shadow:0 1px 3px #20343b08}
 .detail-item+.detail-item{margin-top:12px}
+.detail-earlier{display:block;width:100%;margin-bottom:12px}
 /** 浅色标题区标明父任务，附属项使用轻分隔线，保持紧凑的两级层次。 */
 .detail-heading{display:flex;align-items:flex-start;gap:8px;padding:10px 12px;background:#f3f6f4;border-bottom:1px solid #dce5df}.detail-manifest{align-self:center;color:#627778;white-space:nowrap;font-size:12px}.detail-heading strong{flex:1;min-width:0;overflow-wrap:anywhere;font-size:14px;line-height:20px}.detail-heading .badge{flex:none}
 .detail-part{margin:0 12px;padding:8px 0}.detail-part+.detail-part{border-top:1px solid #edf1ee}

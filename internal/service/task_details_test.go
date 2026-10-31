@@ -154,3 +154,36 @@ func TestTaskDetailsExecutionOrder(t *testing.T) {
 		t.Fatalf("%+v", detail)
 	}
 }
+
+// 详情只返回最近的已结束内容和全部未完成内容，较早记录以数量提示。
+func TestTaskDetailsWindowKeepsActiveAndRecentFinished(t *testing.T) {
+	a := testApp(t, fakeEngine{})
+	sub := addSub(t, a, "window-details", "youtube")
+	for _, remoteID := range []string{"a", "b", "c", "d"} {
+		if err := a.Repo.AddContentAndTask(sub.ID, domain.Content{RemoteID: remoteID, Title: remoteID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all, err := a.TaskDetails(context.Background(), sub.ID)
+	if err != nil || len(all.Items) != 4 || all.Hidden != 0 {
+		t.Fatalf("all=%+v err=%v", all, err)
+	}
+	// 四条均未完成时，窗口不能丢弃任何一条。
+	windowed, err := a.TaskDetailsWindow(context.Background(), sub.ID, 1)
+	if err != nil || len(windowed.Items) != 4 || windowed.Hidden != 0 {
+		t.Fatalf("unfinished must stay: %+v err=%v", windowed, err)
+	}
+	tasks, _ := a.Repo.Tasks()
+	for _, task := range tasks {
+		if content, _ := a.Repo.Content(task.ContentID); content.RemoteID != "d" {
+			task.Status = "completed"
+			if err = a.Repo.SaveTask(&task); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	windowed, err = a.TaskDetailsWindow(context.Background(), sub.ID, 1)
+	if err != nil || windowed.Hidden != 2 || len(windowed.Items) != 2 {
+		t.Fatalf("windowed=%+v err=%v", windowed, err)
+	}
+}

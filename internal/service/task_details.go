@@ -34,10 +34,18 @@ type DetailContent struct {
 type TaskDetails struct {
 	Platform string          `json:"platform"`
 	Items    []DetailContent `json:"items"`
+	// Hidden 是未返回的较早已结束内容数量；未完成内容始终完整返回。
+	Hidden int `json:"hidden"`
 }
 
 // TaskDetails 从帖子任务与下载资源任务关联读取领域状态；执行账本只提供操作 ID 与执行排序。
-func (a *App) TaskDetails(ctx context.Context, sid int64) (result TaskDetails, err error) {
+func (a *App) TaskDetails(ctx context.Context, sid int64) (TaskDetails, error) {
+	return a.TaskDetailsWindow(ctx, sid, 0)
+}
+
+// TaskDetailsWindow 只返回最近 history 条已结束内容和全部未完成内容；history 不大于 0 表示全部。
+// 数百条历史记录不再随每次轮询整体传输、解析和渲染。
+func (a *App) TaskDetailsWindow(ctx context.Context, sid int64, history int) (result TaskDetails, err error) {
 	begin := time.Now()
 	stage := "subscription"
 	var queryDuration time.Duration
@@ -134,5 +142,18 @@ func (a *App) TaskDetails(ctx context.Context, sid int64) (result TaskDetails, e
 		}
 		return orderTime(left.PostID).Before(orderTime(right.PostID))
 	})
+	if history > 0 {
+		finished := 0
+		for _, item := range result.Items {
+			if !unfinished(item) {
+				finished++
+			}
+		}
+		// 已结束项排在未完成项之前，截掉最早的一段即可。
+		if finished > history {
+			result.Hidden = finished - history
+			result.Items = result.Items[result.Hidden:]
+		}
+	}
 	return result, nil
 }

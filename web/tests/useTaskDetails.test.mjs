@@ -19,7 +19,7 @@ function panel(api) {
  const clear = timer => { if (timer) timer.cancelled = true }
  new Function('require', 'exports', 'setTimeout', 'clearTimeout', code)(require, exports, schedule, clear)
  const errors = []
- const state = exports.useTaskDetails(42, error => errors.push(error))
+ const state = exports.useTaskDetails(42, error => errors.push(error), { value: 30 })
  return { ...lifecycle, state, timers, errors }
 }
 

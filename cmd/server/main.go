@@ -42,12 +42,14 @@ func run() error {
 		return e
 	}
 	defer db.Close()
+	// 先激活数据目录中的引擎覆盖，之后启动的所有下载进程都继承。
+	engines := engine.NewUpdater(c.DataDir)
 	app := service.New(c, db, engine.NewCLI(c.DataDir, db))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	done := make(chan struct{})
 	go func() { defer close(done); app.Run(ctx) }()
-	server := &http.Server{Addr: c.Address, Handler: httpapi.Handler(app)}
+	server := &http.Server{Addr: c.Address, Handler: httpapi.HandlerWithEngines(app, engines)}
 	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("Media Harbor V1 已启动", "address", c.Address)

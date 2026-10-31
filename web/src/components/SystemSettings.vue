@@ -87,6 +87,19 @@ async function loadVersions() {
   versions.value = result.versions
  } finally { versionsLoading.value = false }
 }
+type EngineStatus = { current: string; latest?: string; update: boolean; error?: string }
+const engineStatus = ref<Record<string, EngineStatus>>({})
+/** 最新版本来自 PyPI，只在用户点击时查询。 */
+async function checkEngineUpdates() {
+ const result = await api<{ engines: Record<string, EngineStatus> }>('/engines/status')
+ engineStatus.value = result.engines
+ await loadVersions()
+}
+/** 新版本只影响之后启动的下载进程，运行中的任务不中断。 */
+async function updateEngine(name: string) {
+ await api(`/engines/${name}/update`, 'POST')
+ await checkEngineUpdates()
+}
 /** 分类附属数据分别读取，一个慢接口不会延后其他分类的内容。 */
 onMounted(() => {
  void api<{ config: string }>('/gallery-config').then(result => { galleryConfig.value = result.config; galleryReady.value = true }).catch(store.reportError)
@@ -222,9 +235,9 @@ async function removeCookie(platform: string) {
   </div>
  </section>
  <section v-show="category === 'engines'" class="panel settings-panel" :aria-label="t('运行引擎')">
-  <div class="settings-engine-actions"><button :disabled="store.busy" @click="store.mutate(loadVersions, t('版本已刷新'))">{{ t("刷新版本") }}</button></div>
+  <div class="settings-engine-actions"><button :disabled="store.busy" @click="store.mutate(checkEngineUpdates, t('版本已刷新'))">{{ t("检查更新") }}</button></div>
   <p v-if="versionsLoading && !Object.keys(versions).length" class="empty">{{ t('加载中') }}</p>
-  <div v-for="(version, name) in versions" :key="name" class="settings-row settings-version-row"><strong>{{ name }}</strong><span>{{ version }}</span></div>
+  <div v-for="(version, name) in versions" :key="name" class="settings-row settings-version-row"><strong>{{ name }}</strong><span>{{ version }}<template v-if="engineStatus[name]"> · <em v-if="engineStatus[name].error" class="error">{{ engineStatus[name].error }}</em><template v-else-if="engineStatus[name].update">{{ t('可更新至') }} {{ engineStatus[name].latest }} <button :disabled="store.busy" @click="store.mutate(() => updateEngine(String(name)), t('引擎已更新'))">{{ t('更新') }}</button></template><template v-else>{{ t('已是最新') }}</template></template></span></div>
   <details class="settings-details"><summary>{{ t("Instagram 引擎高级配置") }}</summary>
    <div class="settings-detail-content"><textarea :disabled="!galleryReady" v-model="galleryConfig" class="code" rows="8" spellcheck="false" :aria-label="t('gallery-dl JSON 配置')"></textarea>
    <div class="settings-inline-actions"><button :disabled="store.busy || !galleryReady" @click="store.mutate(() => api('/gallery-config', 'PUT', { config: galleryConfig }), t('引擎配置已保存'))">{{ t("保存引擎配置") }}</button></div></div>
