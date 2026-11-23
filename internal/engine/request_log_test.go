@@ -104,3 +104,51 @@ func TestCommentProgressReportsCountAndStage(t *testing.T) {
 		t.Fatal(summary)
 	}
 }
+
+// 字幕接口 429 只让本项字幕失败，不设置平台统一冷却；其他接口 429 仍统一冷却。
+func TestSubtitle429DoesNotTriggerPlatformCooldown(t *testing.T) {
+	r := newInstagramRequests()
+	r.interval = 0
+	r.platform = "YouTube"
+	logs := []string{}
+	env, end, err := r.begin(context.Background(), "media", func(s string) { logs = append(logs, s) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer end()
+	token := strings.TrimPrefix(env[1], "MEDIA_HARBOR_TOKEN=")
+	call := func(body string) []byte {
+		req := httptest.NewRequest("POST", "/", strings.NewReader(body))
+		req.Header.Set("X-Media-Harbor-Token", token)
+		w := httptest.NewRecorder()
+		r.handle(w, req)
+		if w.Code != 200 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		return w.Body.Bytes()
+	}
+	release := func(host, path string) {
+		var acquired struct {
+			Lease string `json:"lease"`
+		}
+		if err := json.Unmarshal(call(`{"Kind":"acquire","Media":true}`), &acquired); err != nil {
+			t.Fatal(err)
+		}
+		call(fmt.Sprintf(`{"Kind":"release","Lease":%q,"Status":429,"Host":%q,"Path":%q}`, acquired.Lease, host, path))
+	}
+	release("www.youtube.com", "/api/timedtext")
+	if time.Until(r.cooldown) > 0 {
+		t.Fatal("字幕 429 触发了平台统一冷却")
+	}
+	if text := strings.Join(logs, "\n"); !strings.Contains(text, "字幕接口收到 429") || strings.Contains(text, "统一冷却 ") {
+		t.Fatal(text)
+	}
+	// 非主站域名的同名路径与页面解析 429 仍按平台限流处理。
+	release("www.youtube.com", "/watch")
+	if time.Until(r.cooldown) <= 0 {
+		t.Fatal("页面 429 未触发平台统一冷却")
+	}
+	if subtitleEndpoint("YouTube", "example.com", "/api/timedtext") || subtitleEndpoint("Instagram", "www.youtube.com", "/api/timedtext") {
+		t.Fatal("字幕接口识别范围过宽")
+	}
+}

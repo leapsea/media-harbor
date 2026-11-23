@@ -297,13 +297,15 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 	}
 	var event struct {
 		Kind, Lease, RetryAfter, Page, Shortcode, AuthFailure, Host string
-		URL                                                         string
-		Cookies                                                     []credentials.Cookie
-		SetCookies                                                  []string
-		Authenticated                                               bool
-		Media                                                       bool
-		Status                                                      int
-		Total, Offset                                               int64
+		// Path 只含 URL 路径，不含查询参数，用于区分字幕等独立限流接口。
+		Path          string
+		URL           string
+		Cookies       []credentials.Cookie
+		SetCookies    []string
+		Authenticated bool
+		Media         bool
+		Status        int
+		Total, Offset int64
 	}
 	if err := json.NewDecoder(req.Body).Decode(&event); err != nil {
 		http.Error(w, err.Error(), 400)
@@ -371,10 +373,18 @@ func (r *instagramRequests) handle(w http.ResponseWriter, req *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"lease": lease})
 	case "release":
 		// 即使 SDK 关闭或请求异常，也归还许可；成功响应才生成传输起点。
-		if event.Status == 429 {
+		if event.Status == 429 && subtitleEndpoint(r.platform, event.Host, event.Path) {
+			// 字幕接口独立限流，不代表平台整体限流；只让本项字幕失败，扫描、评论与缩略图照常。
+			op.log(fmt.Sprintf("%s 字幕接口收到 429；仅本项字幕失败，不触发平台统一冷却，也不按 URL 重新解析", r.platform))
+		} else if event.Status == 429 {
 			left := r.rateLimited(event.RetryAfter)
 			op.log(fmt.Sprintf("%s 收到 429；所有扫描、帖子解析与头像请求统一冷却 %s", r.platform, left.Round(time.Millisecond)))
 		}
+		// 历史资产：任何 429（含字幕 timedtext）均调用 r.rateLimited 触发平台统一冷却。
+		// if event.Status == 429 {
+		// 	left := r.rateLimited(event.RetryAfter)
+		// 	op.log(...)
+		// }
 		r.mu.Lock()
 		release := op.leases[event.Lease]
 		delete(op.leases, event.Lease)
@@ -483,6 +493,14 @@ func (r *instagramRequests) checkCredentials() error {
 		return r.cookies.Check(strings.ToLower(r.platform))
 	}
 	return nil
+}
+
+// youtubeSubtitlePath 是 YouTube 字幕轨道的下载接口，与页面解析、评论接口的限流相互独立。
+const youtubeSubtitlePath = "/api/timedtext"
+
+// subtitleEndpoint 识别平台字幕接口；仅匹配主站域名，避免 CDN 或第三方同名路径被误判。
+func subtitleEndpoint(platform, host, path string) bool {
+	return strings.EqualFold(platform, "YouTube") && trustedCookieHost("youtube", strings.ToLower(host)) && path == youtubeSubtitlePath
 }
 
 // trustedCookieHost 排除媒体CDN和其他网站的401/403，防止误停用登录。

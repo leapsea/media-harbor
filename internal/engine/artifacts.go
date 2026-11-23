@@ -110,6 +110,8 @@ func (v ArtifactInventory) subtitle(language string) bool {
 
 // missingSubtitles 以平台本次提供的语言计算缺项，已有相同语言不重复获取。
 // 不存在可用字幕时不将用户选择的语言冒充已下载文件。
+// 平台机器翻译轨道（URL 含 tlang）不参与选择：timedtext 对翻译请求稳定返回 429，
+// 且内容由识别结果二次翻译而来；没有原生或原语言轨道时按"平台无匹配字幕"处理。
 func (v ArtifactInventory) missingSubtitles(options domain.YouTubeOptions, metadata []byte) string {
 	var available struct {
 		Subtitles map[string]json.RawMessage `json:"subtitles"`
@@ -123,9 +125,16 @@ func (v ArtifactInventory) missingSubtitles(options domain.YouTubeOptions, metad
 		}
 	}
 	if options.AutoSubtitles {
-		for lang := range available.Auto {
+		for lang, raw := range available.Auto {
+			if translatedCaption(lang, raw) {
+				continue
+			}
 			availableLanguages[lang] = true
 		}
+		// 历史资产：自动字幕全部语言（含 tlang 翻译轨道）均可选，翻译版仅在排序中置后作为回退。
+		// for lang := range available.Auto {
+		// 	availableLanguages[lang] = true
+		// }
 	}
 	languages := map[string]bool{}
 	for _, pattern := range strings.Split(options.SubtitleLanguages, ",") {

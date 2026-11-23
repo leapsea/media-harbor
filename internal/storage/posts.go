@@ -318,7 +318,7 @@ func (s *Store) syncResources(tx *sql.Tx, cid int64, status string, progress []d
 // refreshPost 只聚合已确定的期望子任务，不用“已发现的几个都完成”代替完整清单。
 // required 与期望类型同时筛选，配置停用的旧产物不能增加完成数量。
 // 资源数量必须等于已确认的期望数量，未知轮播总数不允许发布完成。
-// 运行状态优先于等待与失败，最后一个阶段还需执行账本确认文件归位。
+// 子项全部完成且没有正在执行的任务即为完成；否则运行状态优先于等待与失败。
 func refreshPost(tx *sql.Tx, id int64) error {
 	var p domain.PostTask
 	var raw []byte
@@ -363,9 +363,8 @@ func refreshPost(tx *sql.Tx, id int64) error {
 	if err != nil {
 		return err
 	}
-	// 最后一项传输结束还需文件归位与执行提交，帖子任务不提前发布完成。
-	// 每个内容只使用最新一次执行状态，旧失败尝试不能阻止成功重试完成。
-	// 取消及失败保留其终态，不能因为所有传输事件到达而被覆盖为成功。
+	// 期望子项全部完成即发布完成；重新排队的补全、重试或中断后的收尾不再让父任务显示待处理。
+	// 正在执行时仍显示下载中，首次下载在文件归位前不提前完成；子项未全部完成时按执行账本展示。
 	rows, err = tx.Query("SELECT t.status FROM tasks t WHERE t.content_id IN (SELECT content_id FROM download_items WHERE post_id=?) AND t.id=(SELECT MAX(latest.id) FROM tasks latest WHERE latest.content_id=t.content_id)", id)
 	if err != nil {
 		return err
@@ -386,7 +385,7 @@ func refreshPost(tx *sql.Tx, id int64) error {
 		return err
 	}
 	p.Status = "queued"
-	if p.ManifestComplete && count == p.Expected && p.Completed == p.Expected && execution["queued"] == 0 && execution["running"] == 0 && execution["failed"] == 0 && execution["cancelled"] == 0 && execution["skipped"] == 0 {
+	if p.ManifestComplete && count == p.Expected && p.Completed == p.Expected && execution["running"] == 0 {
 		p.Status = "completed"
 		p.Error = ""
 	} else {

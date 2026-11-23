@@ -24,7 +24,7 @@ from yt_dlp.extractor.common import InfoExtractor
 class FixtureIE(InfoExtractor):
     _VALID_URL = r'https://fixture.example/(?P<id>video)'
     def _real_extract(self, url):
-        auto = {'zh-Hans': [{'ext': 'vtt', 'url': 'https://fixture.example/captions?lang=en&tlang=zh-Hans', 'data': 'WEBVTT\n\n00:00.000 --> 00:01.000\ntranslation\n'}]} if self.get_param('writeautomaticsub') else {}
+        auto = {'zh-Hans': [{'ext': 'vtt', 'url': 'https://fixture.example/captions?lang=zh-Hans', 'data': 'WEBVTT\n\n00:00.000 --> 00:01.000\noriginal\n'}]} if self.get_param('writeautomaticsub') else {}
         return {'id': 'video', 'title': 'fixture', 'formats': [{'url': 'https://fixture.example/video.mp4', 'ext': 'mp4'}], 'automatic_captions': auto}
 def add_extractors(self):
     self.add_info_extractor(FixtureIE())
@@ -41,7 +41,7 @@ yt_dlp.main()
 		t.Fatal(err)
 	}
 	if raw, err := os.ReadFile(filepath.Join(work, "fixture-video.zh-Hans.vtt")); err != nil || len(raw) == 0 {
-		t.Fatal("自动翻译字幕未下载", err)
+		t.Fatal("自动原始字幕未下载", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(work, ".metadata.json"))
 	if err != nil {
@@ -76,12 +76,15 @@ func TestChineseSubtitlePreference(t *testing.T) {
 		t.Fatal("已有原始中文仍请求翻译字幕", got)
 	}
 	fallback := []byte(`{"automatic_captions":{"zh-Hans":[{"url":"https://example.test/captions?lang=en&tlang=zh-Hans"}],"zh-Hant":[{"url":"https://example.test/captions?lang=en&tlang=zh-Hant"}]}}`)
-	if got := (ArtifactInventory{}).missingSubtitles(options, fallback); got != "zh-Hans" {
-		t.Fatal("没有原始中文时未保留翻译回退", got)
+	// 翻译轨道在 timedtext 上稳定返回 429，没有原始中文时按平台无匹配处理，不再回退翻译版。
+	if got := (ArtifactInventory{}).missingSubtitles(options, fallback); got != "" {
+		t.Fatal("没有原始中文时仍请求翻译字幕", got)
 	}
-	options.SubtitleLanguages = "zh.*,-zh-Hant"
-	if got := (ArtifactInventory{}).missingSubtitles(options, fallback); got != "zh-Hans" {
-		t.Fatal("回退未遵循用户语言排除", got)
+	// 历史资产：没有原始中文时回退翻译版 zh-Hans，并遵循 "zh.*,-zh-Hant" 的排除。
+	original := []byte(`{"automatic_captions":{"en-orig":[{"url":"https://example.test/captions?lang=en"}],"zh-Hans":[{"url":"https://example.test/captions?lang=en&tlang=zh-Hans"}]}}`)
+	options.SubtitleLanguages = "zh.*,en.*"
+	if got := (ArtifactInventory{}).missingSubtitles(options, original); got != "en-orig" {
+		t.Fatal("未跳过翻译轨道选择原语言字幕", got)
 	}
 	options.SubtitleLanguages = "en"
 	options.Subtitles = true

@@ -191,3 +191,29 @@ func TestResumedResourcesClearOnlyRestartWait(t *testing.T) {
 		})
 	}
 }
+
+// 已完成的视频重新排队（补全、重试或服务中断）时，子项沿用已完成结果，父任务不显示待处理。
+func TestRequeuedCompletedPostStaysCompleted(t *testing.T) {
+	s, sub := postStore(t, "youtube")
+	sub.YouTube = &domain.YouTubeOptions{Video: true, Metadata: true}
+	_ = s.SaveSubscription(&sub)
+	if err := s.AddContentAndTask(sub.ID, domain.Content{RemoteID: "requeue", URL: "https://youtu.be/requeue"}); err != nil {
+		t.Fatal(err)
+	}
+	tasks, _ := s.SubscriptionTasks(sub.ID)
+	task := tasks[0]
+	task.Status = "completed"
+	task.Progress = []domain.TransferProgress{{Kind: "video", Status: "completed"}, {Kind: "metadata", Status: "completed"}}
+	_ = s.SaveTask(&task)
+	task.Status = "queued"
+	_ = s.SaveTask(&task)
+	p, _ := s.Post(sub.ID, "requeue")
+	if p.Status != "completed" || p.Completed != p.Expected {
+		t.Fatalf("重新排队后应保持完成：%+v", p)
+	}
+	task.Status = "running"
+	_ = s.SaveTask(&task)
+	if p, _ = s.Post(sub.ID, "requeue"); p.Status != "running" {
+		t.Fatalf("执行中应显示下载中：%+v", p)
+	}
+}

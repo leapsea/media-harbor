@@ -67,6 +67,10 @@ func Open(path string, defaults domain.Settings) (*Store, error) {
 			}
 		}
 	}
+	if e = s.refreshUnfinishedPosts(); e != nil {
+		db.Close()
+		return nil, e
+	}
 	return s, nil
 }
 
@@ -412,3 +416,37 @@ func (s *Store) RecordVersion(name, version string) error {
 
 // IsMissing 供 HTTP 层区分不存在的记录。
 func IsMissing(e error) bool { return errors.Is(e, sql.ErrNoRows) }
+
+// refreshUnfinishedPosts 按当前聚合规则重算未完成的帖子任务，旧版本留下的“子项全完成仍待处理”随启动修正。
+func (s *Store) refreshUnfinishedPosts() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query("SELECT id FROM post_tasks WHERE json_extract(payload,'$.status')<>'completed'")
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
+		ids = append(ids, id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err = refreshPost(tx, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
